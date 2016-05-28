@@ -6,7 +6,7 @@ import platform
 import os
 # =================HttpClient==============
 g_http_client = None
-
+g_zhihu_account = {}
 
 # =================Queue================================================
 
@@ -37,6 +37,7 @@ g_exit_quest_index = 0
 
 
 # database
+g_mysql_params = {}
 g_zhihu_database = None
 g_fail_url = None
 

@@ -4,28 +4,38 @@
 #
 #
 
-import sqlite3
 import time
 import datetime
 import sys
+import os
 import threading
 import ErrorCode
 import Global as gl
 import ZhihuLog
 from ZhihuHtmlParser import ZhihuAnswer, ZhihuComment, ZhihuQuestion, ZhihuUser
+try:
+    import MySQLdb as DB
+    from _mysql_exceptions import Error
+    _mysql_flag = True
+except ImportError:
+    import sqlite3 as DB
+    from sqlite3 import Error
+    _mysql_flag = False
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
 _g_database_logger = ZhihuLog.creatlogger(__name__)
-  
 
 def _create_database(path, table_list):
     '''
     parameter: path, path of database, such as D:\zhihu.db
     table_list, list contains certain tables, such as question, answer, user
     '''
-    conn = sqlite3.connect(path)
+    if _mysql_flag:
+        conn = DB.connect(**gl.g_mysql_params)
+    else:
+        conn = DB.connect(path)
     cur = conn.cursor()
     for table in table_list:
         try:
@@ -98,11 +108,16 @@ class ZhihuDataBase(threading.Thread):
                                                 ) '''%(_comment_table_name)
 
     _COMMIT_INTEVAL = 300
-    _create_database(_DATABASE_PATH, [_QUESTION_TABLE, _ANSWER_TABLE, _USER_TABLE, _COMMENT_TABLE])
+    #_create_database(_DATABASE_PATH, [_QUESTION_TABLE, _ANSWER_TABLE, _USER_TABLE, _COMMENT_TABLE])
 
     def __init__(self):
         threading.Thread.__init__(self, name='save_data')
-        with sqlite3.connect(self._DATABASE_PATH, check_same_thread=False) as db:
+        if not os.path.exists(self._DATABASE_PATH):
+            _create_database( self._DATABASE_PATH, 
+                              [self._QUESTION_TABLE, self._ANSWER_TABLE, 
+                              self._USER_TABLE, self._COMMENT_TABLE]
+                            )
+        with DB.connect(self._DATABASE_PATH, check_same_thread=False) as db:
             self.database = db
         self.database.text_factory = str  
         self.cur = self.database.cursor()
@@ -136,7 +151,7 @@ class ZhihuDataBase(threading.Thread):
             self._lock.acquire(True)  
             self.cur.execute(cmd, data)
             #self.database.commit()            
-        except sqlite3.Error, e :
+        except Error, e :
             _g_database_logger.warning("insert data error, reason: %s"%e.message)
         finally:
             self._lock.release()
@@ -192,7 +207,7 @@ class ZhihuDataBase(threading.Thread):
             self._lock.acquire(True)
             self.cur.execute(cmd)
             data = self.cur.fetchall()            
-        except sqlite3.Error, e:
+        except Error, e:
             _g_database_logger.warning('read data error, reason: %s'%e)
             data = []
         finally:
@@ -220,21 +235,6 @@ class ZhihuDataBase(threading.Thread):
         self.write()
 
 
-gl.g_zhihu_database = ZhihuDataBase()
-gl.g_fail_url = ZhihuLog.creatlogger('%s_FailURL'%datetime.datetime.now().strftime('%Y-%m-%d'))
 
 
-if __name__ == "__main__":
-
-    a = ZhihuAnswer('13199838', '1428750165', 0, '/people/zhou-jin-shan', u'周金山', 0, 0, '', [], [], '','','',False )
-    b = ZhihuUser('Tsai1307', u'', '', '', '', '', '', '', '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '/people/tsai1307', '')
-    c = ZhihuQuestion('/question/44863755', u'', '')
-    gl.g_data_queue.put(c)
-    d = ZhihuComment(123, 33,'', '', 8, '')
-    reta = gl.g_zhihu_database.is_existed(a)
-    retb = gl.g_zhihu_database.is_existed(b)
-    retc = gl.g_zhihu_database.is_existed(c)
-    retd = gl.g_zhihu_database.is_existed(d)
-    print 1
-    raw_input()
 

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 
 import Global
@@ -111,18 +111,48 @@ def INT(String):
         return int(String)
 
 
-class SearchPageParser(object):
-    '''    parser the html abtained by keywords   '''
-    MAX_QUESTION_PER_SEARCH_PAGE = 10
-    _XPATH = "//li[@class='item clearfix' or 'item clearfix article-item']/div[@class='title']/a"
-    _QUESTION_PER_PAGE_BING = 10
-    _BING_XPATH = '//li[@class="b_algo"]/h2/a'
 
-    def __init__(self):
-        pass
+
+class Paser(object):
+    """parse kinds of html"""
+    
+    _QUESTION_PER_PAGE_BING = 10
+    MAX_QUESTION_PER_SEARCH_PAGE = 10
+    
+    MAX_ANSWERS_PER_PAGE = 10
+    _vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')       #used for judging whether the user with certain user_url 
+                                                                                    #is existed in database or not.
+    MAX_COMMENT_PER_PAGE = 30                                                                                
+    
+    def __init__(self, *args, **kwargs):
+        return super(CommentParser, self).__init__(*args, **kwargs)
     
     @classmethod
-    def ParserHtml(cls, html, keywords, count=None, AJAX=True):
+    def parse_bing(cls, html):
+        """parse question url and title from html returned by Bing"""
+        questions = re.findall(r'<h2><a href="(http(s|)://www.zhihu.com/question/\d{8})".+?>(.+?)</a></h2>', html[0])
+        question_count = len(questions)
+        for node in questions:
+            try:
+                url = node[0]
+                uri = re.findall('/question/\d{8}', url)[0]
+                title = node[2].decode('utf-8')
+
+                q = ZhihuQuestion(uri, title, '')
+                Global.g_data_queue.put(q)
+                isexisted = Global.g_zhihu_database.is_existed(q)
+                #if not isexisted: 
+                Global.g_question_queue.put(uri)
+                
+            except Exception,e :
+                _g_html_logger.error('%s when parse bing html'%e)
+        if question_count < cls._QUESTION_PER_PAGE_BING:
+            #_g_html_logger.warning('Achieve to the end of bing cache')
+            return ErrorCode.ACHIEVE_END
+        return ErrorCode.OK
+        
+    @classmethod
+    def Parser_zhihu(cls, html, keywords, count=None, AJAX=True):
         '''
         parse questions' information in html returned by get_html(url) method, and put the Question object into global queue, and write 
               in database. 
@@ -138,7 +168,7 @@ class SearchPageParser(object):
         #abstract question node from html
         if not AJAX:
             parse = etree.HTML(html[0])
-            question_node = parse.xpath(cls._XPATH)
+            question_node = parse.xpath("//li[@class='item clearfix' or 'item clearfix article-item']/div[@class='title']/a")
         else:
             question_node = json.loads(html[0])['htmls']
         question_counts = len(question_node)
@@ -180,55 +210,21 @@ class SearchPageParser(object):
             _g_html_logger.info('%s Achieve end of the search page!'%keywords)
             return ErrorCode.ACHIEVE_END  # notify the upper loop to exit
         return ErrorCode.OK #normal condition    
-    
+        
     @classmethod
-    def ParserBing(cls, html):
-        """parse question url and title from html returned by Bing"""
-        questions = re.findall(r'<h2><a href="(http(s|)://www.zhihu.com/question/\d{8})".+?>(.+?)</a></h2>', html[0])
-        #tree = etree.HTML(html[0])
-        #nodes = tree.xpath(cls._BING_XPATH)
-        question_count = len(questions)
-        for node in questions:
-            try:
-                url = node[0]
-                uri = re.findall('/question/\d{8}', url)[0]
-                title = node[2].decode('utf-8')
-
-                q = ZhihuQuestion(uri, title, '')
-                Global.g_data_queue.put(q)
-                isexisted = Global.g_zhihu_database.is_existed(q)
-                #if not isexisted: 
-                Global.g_question_queue.put(uri)
-                
-            except Exception,e :
-                _g_html_logger.error('%s when parse bing html'%e)
-        if question_count < cls._QUESTION_PER_PAGE_BING:
-            #_g_html_logger.warning('Achieve to the end of bing cache')
-            return ErrorCode.ACHIEVE_END
-        return ErrorCode.OK
-  
-class QuestionParser(object):
-    """parse answers in question page"""
-    MAX_ANSWERS_PER_PAGE = 10
-
-    _vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')       #used for judging whether the user with certain user_url 
-                                                                                    #is existed in database or not.
-    def __init__(self):
-        pass
-
-    @classmethod
-    def ParserHtml(cls, html, quest_url, AJAX=True):
+    def parse_qstn(cls, html, quest_url):
         """
         @parameters: html, list which has only one element. 
                      quest_url, uniform resource locator, whose format is `/question/\d{8}`, eg. /question/12345678
-                     AJAX, specified whether the html has entire html page ,or has only partial elements, such as json or xml
-                           if AJAX==False, means the parameter `html` has all elements of an intact html page
         this function does two things below,
              1. when run into answer, push the url of anthor into Global.g_user_queue. and push image url list into Global.g_img_queue
                 and push comment url of this answer int Global.g_answer_comment_queue
              2. insert answer information into database
         @return will return error code according to parse result
         """
+        AJAX = True if '"r":0' in html[0] else False #specified whether the html has complete html structure ,
+                                                     #or has only partial elements, such as json or xml
+                                                     #if AJAX==False, means the html[0] has all elements of an complete html page
         
         if not AJAX:
             parse = etree.HTML(html[0])
@@ -245,7 +241,7 @@ class QuestionParser(object):
                 answer_nodes = []
         answer_counts = len(answer_nodes)
         
-        if answer_counts == 0 and html[0] != u'{"r":0,\n "msg": []\n}':
+        if answer_counts == 0 and u'"msg": []' not in html[0]:
             _g_html_logger.error("no answer in question page, chech xpath of answer_nodes")
             Global.g_fail_url.warning(quest_url)
             return ErrorCode.LIST_EMPTY_ERROR, all_answer_counts
@@ -312,15 +308,9 @@ class QuestionParser(object):
             _g_html_logger.info('Achieve end of the answers in %s'%quest_url)
             return ErrorCode.ACHIEVE_END, all_answer_counts
         return ErrorCode.OK, all_answer_counts
-
-
-class PersonPageParser(object):
-    """parse user's information in personal page"""
-    def __init__(self):
-        pass
-
+        
     @classmethod
-    def ParserHtml(cls, html, user_url):
+    def parse_usr(cls, html, user_url):
         """
         @parameter: html, returned by GetHtml() method, list with only one element
                    user_url , is the url of user, such as /people/peng-quan-xin    
@@ -392,16 +382,9 @@ class PersonPageParser(object):
             Global.g_fail_url.warning(user_url)
             return ErrorCode.USER_INFO_FAIL
         return 0
-
-
-class CommentParser(object):
-    """"""
-    MAX_COMMENT_PER_PAGE = 30
-    def __init__(self, *args, **kwargs):
-        return super(CommentParser, self).__init__(*args, **kwargs)
-
+        
     @classmethod
-    def ParserHtml(cls, html, answer_url, url):
+    def parse_cmnt(cls, html, answer_url, url):
         """
         @param: answer_url is the code of answer, such as 20990037
                 url is the whole url of this comment, such as 'https://www.zhihu.com/r/answers/8720147/comments?page=2'
@@ -429,7 +412,3 @@ class CommentParser(object):
                 _g_html_logger.error("%s when parser %s"%(e, answer_url))
             
         return 0
-
-
-
-

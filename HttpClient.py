@@ -28,29 +28,6 @@ _SEARCH_INTERVAL = 5
 _COMMET_INTERVAL = 1
 _USER_INTERVAL = 0
 
-def InputAccount():
-    """
-    method to input account
-    """
-    email_pattern = "^([a-z0-9A-Z]+[-|\\.]?)+[a-z0-9A-Z]@([a-z0-9A-Z]+(-[a-z0-9A-Z]+)?\\.)+[a-zA-Z]{2,}$"
-    phone_num_pattern = r"^1\d{10}$"
-
-    print "Please entry your ZhiHu account"
-    while True:
-        username = raw_input("username:\n")
-        if re.match(email_pattern,username):
-            user_type = "email"
-            break
-        if re.match(phone_num_pattern, username):
-            user_type = "phone_num"
-            break
-        else:
-            print "username is invalid, please input email or mobile phone number!"
-
-    password = raw_input("password:\n")
-    account = {user_type:username, "password":password}      
-    return account
-
 
 class HttpClient(object):
     """"""
