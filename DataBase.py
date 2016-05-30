@@ -5,7 +5,6 @@
 #
 
 import time
-import datetime
 import sys
 import os
 import threading
@@ -16,33 +15,52 @@ from ZhihuHtmlParser import ZhihuAnswer, ZhihuComment, ZhihuQuestion, ZhihuUser
 try:
     import MySQLdb as DB
     from _mysql_exceptions import Error
+    from _mysql_exceptions import OperationalError
     _mysql_flag = True
+    _h = '%s' #placeholder for MySQL syntax
 except ImportError:
+    print "fail to import site-package `MySQLdb`, check whether it has been installed or not"
+    sys.exit()
+    #doesn't supoort sqlite3 anymore
     import sqlite3 as DB
     from sqlite3 import Error
     _mysql_flag = False
+    _h = '%s' #placeholder for Sqlite3 syntax
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
 _g_database_logger = ZhihuLog.creatlogger(__name__)
 
-def _create_database(path, table_list):
+def _create_database(table_list):
     '''
-    parameter: path, path of database, such as D:\zhihu.db
-    table_list, list contains certain tables, such as question, answer, user
+    @parameter:  table_list, list contains certain tables, such as question, answer, user
+    @return: return the connection of database
     '''
-    if _mysql_flag:
-        conn = DB.connect(**gl.g_mysql_params)
-    else:
-        conn = DB.connect(path)
-    cur = conn.cursor()
+    import copy
+    p = copy.deepcopy(gl.g_mysql_params)
+    del p['db']      
+    #create database if not existed
+    try:
+        conn = DB.connect(**p)
+        cur = conn.cursor()
+        cur.execute('create database if not exists %s'%gl.g_mysql_params['db'])
+        conn.select_db(gl.g_mysql_params['db'])
+    except Error, e :
+        print '%s when create database %s'%(e, gl.g_mysql_params['db'])
+        sys.exit()
+    #create table     
     for table in table_list:
         try:
             cur.execute(table)
-            _g_database_logger.info("Succeed to create table %s in database %s"%(table, path))
-        except Exception, e :
-            _g_database_logger.error('Fail to create table in database %s, reason: %s'%(path, e.message))
+            _g_database_logger.info("Succeed to create table %s in database %s"%(table, gl.g_mysql_params['db']))
+        except OperationalError, e :
+            _g_database_logger.error('Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], e.message))            
+            if e[0] != 1050:
+                print 'Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], e.message)
+                sys.exit()
+
+    return conn
 
 class ZhihuDataBase(threading.Thread):
     '''save text data to database'''
@@ -52,79 +70,80 @@ class ZhihuDataBase(threading.Thread):
     _answer_table_name = 'Answers'
     _user_table_name = 'Users'
     _comment_table_name = 'Comments'
-    _QUESTION_TABLE = '''CREATE TABLE %s       (   title      TEXT,
-                                                   url        TEXT,
-                                                   keywords   TEXT,
-                                                   PRIMARY KEY(url))'''%_question_table_name
-    _ANSWER_TABLE = '''CREATE TABLE %s       (   id             TEXT,
-                                                 date           TEXT,
-                                                 anonymous      TEXT,
-                                                 user_url       TEXT,
-                                                 user_name      TEXT,
-                                                 vote           INTEGER,
-                                                 comment_count  INTEGER,
-                                                 content        TEXT,
-                                                 img_urls       TEXT,
-                                                 extern_links   TEXT,
-                                                 img_folder     TEXT,
-                                                 question_url   TEXT,
-                                                 answer_url     TEXT,
-                                                 PRIMARY KEY(id)
-                                                 FOREIGN KEY(question_url) REFERENCES %s(url)
+    _QUESTION_TABLE = '''CREATE TABLE %s       (   title      varchar(256),
+                                                   url        varchar(32) ,
+                                                   keywords   char(8),
+                                                   PRIMARY KEY(url)
+                                                );'''%_question_table_name
+    _ANSWER_TABLE = '''CREATE TABLE %s       (   id             int ,
+                                                 date           int,
+                                                 anonymous      char(1),
+                                                 user_url       varchar(256),
+                                                 user_name      varchar(256),
+                                                 vote           int,
+                                                 comment_count  int,
+                                                 content        mediumtext,
+                                                 img_urls       text,
+                                                 extern_links   text,
+                                                 img_folder     varchar(256),
+                                                 question_url   varchar(32),
+                                                 answer_url     varchar(64),
+                                                 PRIMARY KEY(id),
+                                                 FOREIGN KEY(question_url) REFERENCES %s(url),
                                                  FOREIGN KEY(user_url) REFERENCES %s(user_url)
-                                                ) '''%(_answer_table_name, _question_table_name, _user_table_name)
-    _USER_TABLE = '''CREATE TABLE %s     (   name           TEXT,
-                                             gender         TEXT,
-                                             discription    TEXT,
-                                             location       TEXT,
-                                             position       TEXT,
-                                             business       TEXT,
-                                             employ         TEXT,
-                                             education      TEXT,
-                                             sign           TEXT,
-                                             followees      INTEGER,
-                                             followers      INTEGER,
-                                             upvote         INTEGER,
-                                             thanks         INTEGER,
-                                             asks           INTEGER,
-                                             answers        INTEGER,
-                                             papers         INTEGER,
-                                             collection     INTEGER,
-                                             public         INTEGER,
-                                             weibo          TEXT,
-                                             user_url       TEXT,
-                                             avatar_url     TEXT,
-                                             avatar_path    TEXT,
+                                                ); '''%(_answer_table_name, _question_table_name, _user_table_name)
+    _USER_TABLE = '''CREATE TABLE %s     (   name           varchar(256),
+                                             gender         varchar(32),
+                                             discription    text,
+                                             location       text,
+                                             position       text,
+                                             business       text,
+                                             employ         text,
+                                             education      text,
+                                             sign           text,
+                                             followees      int,
+                                             followers      int,
+                                             upvote         int,
+                                             thanks         int,
+                                             asks           int,
+                                             answers        int,
+                                             papers         int,
+                                             collection     int,
+                                             public         int,
+                                             weibo          varchar(256),
+                                             user_url       varchar(256),
+                                             avatar_url     varchar(256),
+                                             avatar_path    varchar(256),
                                              PRIMARY KEY(user_url)
-                                             )'''%_user_table_name
+                                             );'''%_user_table_name
 
-    _COMMENT_TABLE = '''CREATE TABLE %s       (  ID             INTEGER,
-                                                 ReplyID        INTEGER,
-                                                 CommentBy      TEXT,
-                                                 Content        TEXT,
-                                                 Supporters     INTEGER,
-                                                 answer_url     TEXT,
+    _COMMENT_TABLE = '''CREATE TABLE %s       (  ID             int,
+                                                 ReplyID        int,
+                                                 CommentBy      text,
+                                                 Content        text,
+                                                 Supporters     int,
+                                                 answer_url     varchar(64),
                                                  PRIMARY KEY(ID)
-                                                ) '''%(_comment_table_name)
+                                                ); '''%(_comment_table_name)
 
     _COMMIT_INTEVAL = 300
     #_create_database(_DATABASE_PATH, [_QUESTION_TABLE, _ANSWER_TABLE, _USER_TABLE, _COMMENT_TABLE])
 
     def __init__(self):
-        threading.Thread.__init__(self, name='save_data')
-        if not os.path.exists(self._DATABASE_PATH):
-            _create_database( self._DATABASE_PATH, 
-                              [self._QUESTION_TABLE, self._ANSWER_TABLE, 
-                              self._USER_TABLE, self._COMMENT_TABLE]
-                            )
-        with DB.connect(self._DATABASE_PATH, check_same_thread=False) as db:
-            self.database = db
-        self.database.text_factory = str  
+        threading.Thread.__init__(self, name='database')
+        #if _mysql_flag:
+        self.database = _create_database([self._QUESTION_TABLE, self._USER_TABLE, 
+                                          self._COMMENT_TABLE, self._ANSWER_TABLE]
+                                        )
+        # else:
+        #     with DB.connect(self._DATABASE_PATH, check_same_thread=False) as db:
+        #         self.database = db
+        #         self.database.text_factory = str  
         self.cur = self.database.cursor()
         self.timer = time.time()
         self.setDaemon(False)
         self._lock = threading.Lock()
-        self.start()
+        #self.start()
 
     def insert_data(self, instance):
         '''
@@ -132,24 +151,28 @@ class ZhihuDataBase(threading.Thread):
         '''
         if isinstance(instance, ZhihuQuestion):
             data = (instance.question_title, instance.question_url, instance.keywords)
-            cmd = r'''INSERT INTO %s VALUES (?,?,?)'''%self._question_table_name
+            cmd = r'''INSERT INTO %s VALUES (%s,%s,%s)'''%(self._question_table_name, _h, _h, _h)
+            
         elif isinstance(instance, ZhihuAnswer):
             data = (instance.id, instance.date, int(instance.is_anonymous), instance.user_url, instance.user_name, instance.vote, instance.comment_count, instance.content,
                     '\n'.join(instance.img_urls), '\n'.join(instance.extern_links),  instance.img_folder, instance.question_url, instance.answer_url)
-            cmd = r'''INSERT INTO %s VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''' % self._answer_table_name
+            cmd = r'''INSERT INTO %s VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''' % (self._answer_table_name, 
+                                             _h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h)
         elif isinstance(instance, ZhihuUser):
             data = (instance.name, instance.gender, instance.discription, instance.location, instance.position,
                     instance.business, instance.employ, instance.education, instance.sign, instance.followees, 
                     instance.followers, instance.upvote, instance.thanks, instance.asks, instance.answers, instance.papers, 
                     instance.collection, instance.public, instance.weibo, instance.user_url, instance.avatar_url, instance.user_url)
-            cmd = r'''INSERT INTO %s VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''%self._user_table_name
+            cmd = r'''INSERT INTO %s VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'''%(self._user_table_name,
+                                             _h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h,_h)
         elif isinstance(instance, ZhihuComment):
             data = (instance.id, instance.replyid, instance.comment_by, instance.content, instance.likes, instance.answer_url)
-            cmd = r'''INSERT INTO %s VALUES (?,?,?,?,?,?)'''%self._comment_table_name
+            cmd = r'''INSERT INTO %s VALUES (%s,%s,%s,%s,%s,%s)'''%(self._comment_table_name,
+                                             _h,_h,_h,_h,_h,_h)
 
         try:
             self._lock.acquire(True)  
-            self.cur.execute(cmd, data)
+            ret = self.cur.execute(cmd, data)
             #self.database.commit()            
         except Error, e :
             _g_database_logger.warning("insert data error, reason: %s"%e.message)
@@ -172,6 +195,7 @@ class ZhihuDataBase(threading.Thread):
                     break
             except Exception, e :
                 _g_database_logger.error("commit data to database error, reason: %s"%e)
+        self.cur.close()
 
     def _commit_data(self):
         """commit insert transaction"""
@@ -194,14 +218,8 @@ class ZhihuDataBase(threading.Thread):
             self.read(tbn='Users', u"education='北京大学'", ['name', 'user_url'])
             will return column `name` and `user_url` of line which matches `filters` 
         """
-        if cln is not None:
-            cl = ','.join(cln)
-        else:
-            cl = '*'
-        if filters is not None:
-            fts = "WHERE %s"%filters
-        else:
-            fts = ""
+        cl = ','.join(cln) if cln is not None else '*'
+        fts = "WHERE %s"%filters if filters is not None else ""
         cmd = r'''SELECT %s FROM %s %s'''%(cl, tbn, fts)
         try:
             self._lock.acquire(True)
