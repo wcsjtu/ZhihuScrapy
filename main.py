@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import datetime
 #from HttpClient import *
 import Global as gl
 #import Control
@@ -34,10 +35,11 @@ def input_account():
 def mysql_params():
     print "input parameters for MySql"
     gl.g_mysql_params['host'] = raw_input('host : ')
-    gl.g_mysql_params['port'] = int(raw_input('port : '))
+    gl.g_mysql_params['port'] = int(raw_input('port(default 3306) : '))
     gl.g_mysql_params['user'] = raw_input('username : ')
     gl.g_mysql_params['passwd'] = raw_input('password : ')
     gl.g_mysql_params['db'] = raw_input('database : ')
+    gl.g_mysql_params['charset'] = raw_input('charset(default `utf8`) : ')
 
 def image_folder():
     """"""
@@ -66,9 +68,11 @@ def init():
         gl.g_zhihu_account = cfg.sects['Account']
         gl.g_mysql_params = cfg.sects['DataBase']
         gl.g_mysql_params['port'] = int(gl.g_mysql_params['port'])
+        
 
 if __name__ == '__main__':
 
+    from ZhihuHtmlParser import ZhihuQuestion, ZhihuAnswer, ZhihuUser
     init()
 
     gl.g_zhihu_database = DataBase.ZhihuDataBase()
@@ -80,7 +84,15 @@ if __name__ == '__main__':
 
     # controller.init_task(kw=u'site:zhihu.com/question *', std=1)
     # controller.wait_cmd()
-    
+
+
+    q = ZhihuQuestion(title=u'马化腾写代码的水平如何？ - 腾讯 - 知乎', url='/question/20485547', keywords='')
+    a = ZhihuAnswer(5042800, 1397376050, 0, '/people/si-pi-lie-dan', u'撕皮裂蛋', 790, 111, u'不得不服周杰伦 全是自己的歌', '', '', '/people/si-pi-lie-dan', '/question/23371727', '24440533', False)
+
+
+    gl.g_zhihu_database.insert_data(a)
+    gl.g_zhihu_database.insert_data(q)
+    gl.g_zhihu_database._commit_data()
     data = gl.g_zhihu_database.read('Users', u"education='北京大学'")
     print data
     

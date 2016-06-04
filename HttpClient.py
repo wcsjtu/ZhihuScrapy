@@ -3,6 +3,7 @@
 singleton
 """
 import Queue
+import urlparse
 import socket
 import urllib
 import json
@@ -58,41 +59,64 @@ class HttpClient(object):
     def get_headers(self):
         return copy.deepcopy(self.default_headers)
 
-    def get_html(self, url, payload=None, header=None):
+    def url_request(self, method_, url_, payloads_, headers_):
         """
-        parameters: url, string, absolute url of resource at goal webserver
-                    payload, dictionary, extra data to send when visit certain resource
-                    header, dictionary, customed headers
-        return: return dictionary, value is [error code, response headers, html(string) or binary data]
+        @params: method, http method, 'GET' or 'POST', or 'PUT', or 'DELETE', or 'HEAD'
+                 url, url, string, absolute url of resource at goal webserver
+                 payloads, dict or None, extra data to send when visit certain resource
+                 headers, dict  or None, customed headers
+        @return: if http status is 200, this function will return [[data], url, payloads, headers]
+                 if occurs connection error or http status is not 200, this function will return None
         """
         try:
-            if payload is None:
-                if header is None:
-                    rqst = self.session.get(url, headers=self.default_headers, timeout=10)
-                else:
-                    rqst = self.session.get(url, headers=header, timeout=10)
-            else:
-                if header is None:
-                    rqst = self.session.post(url, data=payload, headers=self.default_headers, timeout=10)
-                else:
-                    rqst = self.session.post(url, data=payload, headers=header, timeout=10) 
-            self.session.cookies.save(ignore_discard=True)   
-            if rqst.status_code != 200: 
-                gl.g_fail_url.warning('%s %s'%(url, str(payload)))                
-            return {'errno':rqst.status_code, 'headers':rqst.headers, 'content':[rqst.content]}
-            
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError), e:
+            header = self.default_headers if headers_ is not None else headers_
+            rqst = self.session.request(method=method_, url=url_, data=payloads_, headers=header, timeout=10) 
+            if 'Set-Cookie' in rqst.headers or 'Set-Cookie2' in rqst.headers:
+                self.session.cookies.save(ignore_discard=True)
+            if rqst.status_code != 200:
+                rqst = self.session.request(method=method_, url=url_, data=payloads_, headers=header, timeout=10)
+                if rqst.status_code != 200:
+                    gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
+                    return None
+            return [[rqst.content], url_, payloads_, headers_]
+
+        except (requests.HTTPError, requests.Timeout, requests.ConnectionError, requests.TooManyRedirects), e: 
             tips = '%s when visit %s '%(e, url) if payload is None else '%s when \
                     visit %s with data %s'%(e, url, str(payload).decode('unicode_escape'))
             self.logger.error(tips)
             gl.g_fail_url.warning('%s %s'%(url, str(payload)))
-            return {'errno':ErrorCode.HTTP_FAIL, 'headers':{}, 'content':[]}
-        except requests.TooManyRedirects, e :
-            tips = '%s when visit %s '%(e, url) if payload is None else '%s when \
-                    visit %s with data %s'%(e, url, str(payload).decode('unicode_escape'))
-            self.logger.error(tips) 
-            gl.g_fail_url.warning('%s %s'%(url, str(payload)))           
-            return {'errno':ErrorCode.HTTP_TOMANY_REDCT, 'headers':{}, 'content':[]}
+            return None
+                 
+    def get_html(self, method_, url_, payloads_, headers_):
+        """get html and put it into html queue"""
+        ret = self.url_request(method_, url_, payloads_, headers_)
+        if ret is not None:
+            gl.g_html_queue.put(ret)
+
+    def get_static_rc(self, urls, headers, storepath):
+        """
+        get static resource and store it in certain path
+        @params: urls, list of static resource's url
+                 headers, dict or None, customed headers
+                 storepath, file system folder, which store the resources in urls, such as E:/zhihuimg/ for windows, /meida/zhihuimg for linux
+        """
+        try:
+            if not os.path.exists(storepath):
+                os.mkdir(storepath)
+        except WindowsError, e :
+            gl.g_http_client.logger.error( "fail to check path %s" %storepath)
+        for url_ in urls:
+            try:
+                rc_name = url_.split('/')[-1]
+                rc_path = os.path.join(storepath, rc_name)
+                ret = self.url_request('GET', url_, None, None)
+                if ret is not None:
+                    with open(rc_path, 'wb') as f:
+                        f.write(ret[0][0])
+            except Exception, e :
+                gl.g_http_client.logger.error( "%s when downloading img %s" % (e, url_))
+                print "%s when downloading img %s" % (e, url_)
+
 
     def _get_veri_code(self):
         """to get captcha"""
@@ -144,384 +168,4 @@ class HttpClient(object):
         self.login_success = False
         self._is_init = True
         return False
-
-
-class SearchEngine(threading.Thread):
-    """
-    class to search resourch by key on given website
-    """
-    _parser = ZhihuHtmlParser.SearchPageParser()
-    _QUESTION_PER_PAGE = ZhihuHtmlParser.SearchPageParser.MAX_QUESTION_PER_SEARCH_PAGE
-
-    def __init__(self, url, keyword, results_num=None, ui_mode=False):
-        """
-        parameters: url, given webstie
-                    key_words, key words
-                    results_num, the count of result user wants to get
-                    ui_mode, if false, self.search method work at scrapy mode, cover all the questions returned by key words
-        """
-        threading.Thread.__init__(self, name='SearchEngine')
-        self.url = url
-        self.key_words = keyword
-        self.results_num = results_num
-        self.ui_mode = ui_mode
-        self.setDaemon(False)
-        self.start()
-        
-
-    def search(self):
-        """"""
-        for item in self.keyword_list:
-            self.key_words = item
-            search_by_keyword = {"q":self.key_words, "type":"content"}    # after March, 18，`question` is replaced by `content`
-            search_url = self.url + '/search?' + urllib.urlencode(search_by_keyword)
-            response = gl.g_http_client.get_html(search_url)
-            if response['errno'] != ErrorCode.HTTP_OK:  # if http error or socket error, retry once
-                response = gl.g_http_client.get_html(search_url)
-            ret = self._parser.ParserHtml(response['content'], self.key_words, self.results_num, AJAX=False)
-            if ret == ErrorCode.LIST_EMPTY_ERROR:  # if find nothing in html , retry once
-                response = gl.g_http_client.get_html(search_url)
-                ret = self._parser.ParserHtml(response['content'], self.key_words, self.results_num, AJAX=False)
-            if ret == ErrorCode.ACHIEVE_END or ret == ErrorCode.ACHIEVE_USER_SPECIFIED:  # if achieve to the end of questions, return
-                return
-
-        if self.ui_mode:   # if UI mode is active, method 'more'
-            return         # will be called by 'MORE' button , rather than by console
-
-        if self.results_num is not None:
-            remainder = self.results_num - ZhihuHtmlParser.SearchPageParser.MAX_QUESTION_PER_SEARCH_PAGE
-        else:
-            remainder = None
-        i = 0
-        while True:
-            i += 1
-            html = self.More(self._QUESTION_PER_PAGE*i)
-            ret = self._parser.ParserHtml(html, self.key_words, remainder, AJAX=True)
-            if ret == ErrorCode.LIST_EMPTY_ERROR:
-                ret = self._parser.ParserHtml(self.More(self._QUESTION_PER_PAGE*i),
-                                              self.key_words, remainder, AJAX=True)
-            if ret == ErrorCode.ACHIEVE_END or ret == ErrorCode.ACHIEVE_USER_SPECIFIED:
-                break
-            elif ret == ErrorCode.OK:
-                if remainder is not None:
-                    remainder -= ZhihuHtmlParser.SearchPageParser.MAX_QUESTION_PER_SEARCH_PAGE
-
-    def More(self, offset):
-        """"""
-        # after March,18，{"q":self.key_words, "type":"question", "range":"","offset":offset}
-        # is replaced by{"q":self.key_words, "type":"content", "offset":offset}
-        search_by_keyword={"q":self.key_words, "type":"content", "offset":offset}
-        search_url = self.url + '/r/search?' + urllib.urlencode(search_by_keyword)
-        response = gl.g_http_client.get_html(search_url)
-        if response['errno'] != ErrorCode.HTTP_OK:
-            gl.g_http_client.logger.warning('%s when get %s'%(response['errno'], search_url))
-        return response['content']
-
-    @classmethod
-    def search_by_bing(cls, keywords):
-        """"""
-        bing = 'https://cn.bing.com/search?'
-        first = 1
-        while True:
-            
-            try:
-                payload = urllib.urlencode({'q':keywords, 'first':first})
-                url = ''.join([bing, payload])
-                response = gl.g_http_client.get_html(url)
-                if response['errno'] != ErrorCode.HTTP_OK:
-                    gl.g_http_client.logger.warning('%s when get %s'%(response['errno'], url))
-                ret = ZhihuHtmlParser.SearchPageParser.ParserBing(response['content'])
-                first += ZhihuHtmlParser.SearchPageParser._QUESTION_PER_PAGE_BING
-                gl.g_exit_quest_index = first
-                #if ret == ErrorCode.ACHIEVE_END:
-                #    break
-            except Exception,e:
-                first += ZhihuHtmlParser.SearchPageParser._QUESTION_PER_PAGE_BING
-                gl.g_http_client.logger.error('%s when search bing at first=%s'%(e, first))
-                gl.g_exit_quest_index = first
-            finally:
-                if gl.g_question_exit:                     
-                    return first
-                time.sleep(_SEARCH_INTERVAL)
-
-    def run(self):
-        self.search_by_bing(self.key_words)
-
-
-class QuestionAbs(threading.Thread):
-
-    _parser = ZhihuHtmlParser.QuestionParser()
-    _ANSWERS_PER_PAGE = ZhihuHtmlParser.QuestionParser.MAX_ANSWERS_PER_PAGE
-
-    def __init__(self, name, ui_mode=False, question_index=None):
-        """"""
-        threading.Thread.__init__(self)
-        self.name = name
-        self.ui_mode = ui_mode
-        if ui_mode: self.done=False
-        self.question_index = question_index
-        self.setDaemon(False)
-        self.start()
-
-    @classmethod
-    def parse_answers(cls, question_url, headers):
-        """
-        the format of question_url is `/question/\d{8}`, for example, /question/25835899
-        """
-        response = gl.g_http_client.get_html(gl.g_http_client.get_host()+question_url, header=headers)
-        ret, max_answ_counts = cls._parser.ParserHtml(response['content'], question_url, AJAX=False)
-        if ret == ErrorCode.ACHIEVE_END:
-            return ErrorCode.ACHIEVE_END
-
-        offset = 0 
-        remainder = max_answ_counts - cls._ANSWERS_PER_PAGE
-        while remainder > 0:
-            offset += 1
-            html = cls.more(question_url, offset*cls._ANSWERS_PER_PAGE)
-            ret, _ = cls._parser.ParserHtml(html, question_url, AJAX=True)
-            if ret == ErrorCode.LIST_EMPTY_ERROR:
-                print 'visit %s with offset %s once again!' % (question_url, str(offset*cls._ANSWERS_PER_PAGE))
-                gl.g_http_client.logger.warning('visit %s with offset %s once again!' % (question_url, str(offset*20)))
-                response = gl.g_http_client.get_html(gl.g_http_client.get_host()+question_url)
-                ret, _ = cls._parser.ParserHtml(response['content'], question_url, AJAX=True)
-            if ret == ErrorCode.ACHIEVE_END:
-                break
-            elif ret == ErrorCode.OK:
-                remainder -= cls._ANSWERS_PER_PAGE
-        return ErrorCode.ACHIEVE_END
-
-    def run(self):
-        """"""
-        _headers = gl.g_http_client.get_headers()
-        _headers['Referer'] = gl.g_http_client.get_host()
-        while True:
-
-            if gl.g_question_queue.empty() and gl.g_question_exit:
-                print "Task compeleted! thread %s exit!\n" % self.name
-                gl.g_http_client.logger.warning("Task compeleted! thread %s exit!\n" % self.name)
-                break 
-            else:
-                if self.ui_mode:
-                    if self.done:
-                        break
-                    goal_url = gl.g_question_queue.queue[self.question_index].question_url  # maybe error
-                    self.done = True
-                    if goal_url.startswith('http'):
-                        gl.g_http_client.logger.warning('zhuanlan url %s' % goal_url)
-                        continue 
-                else:
-                    try:    
-                        goal_url = gl.g_question_queue.get(timeout=_GET_QUEUE_TIMEOUT)
-                    except Queue.Empty,e:
-                        print 'timeout when get question url in %s thread'%self.name
-                        gl.g_http_client.logger.warning('timeout when get question url in %s thread'%self.name)
-                        continue
-                    print goal_url 
-                    if goal_url.startswith('http'):
-                        gl.g_http_client.logger.warning('zhuanlan url %s'%goal_url)
-                        continue
-            ret = self.parse_answers(goal_url, _headers)
-        gl.g_comment_exit = True
-        gl.g_usr_exit = True
-        gl.g_retrieve_exit = True
-        return 0
-            
-    @classmethod
-    def more(cls, goal_url, offset):
-        """
-        parameter: offset equal to 10*i, where i is 1,2,3.....
-        return html and answers count
-        retval count will be used to judge when to break loop
-        """
-        uri = '/node/QuestionAnswerListV2'
-        question_code = goal_url.split('/')[2]
-        gl.g_http_client.default_headers['Referer'] = "https://www.zhihu.com" + goal_url
-        gl.g_http_client.default_headers['Content-Type'] = "application/x-www-form-urlencoded; charset=UTF-8"
-        pagesize = cls._ANSWERS_PER_PAGE
-        post_data = "method=next&params=%7B%22url_token%22%3A" + question_code + "%2C%22pagesize%22%3A" + str(pagesize) + \
-                    "%2C%22offset%22%3A" + str(offset) + "%7D&_xsrf=" + gl.g_http_client.account['_xsrf']
-        response = gl.g_http_client.get_html(gl.g_http_client.get_host()+uri, post_data)
-        if response['errno'] != ErrorCode.HTTP_OK:
-            gl.g_http_client.logger.warning('%s when get %s'%(response['errno'], question_code))
-        return response['content']
-
-
-class RetrieveAgent(threading.Thread):
-
-              
-    def __init__(self, name, ui_mode=False):
-        """"""
-        threading.Thread.__init__(self)
-        self.name = name
-        self.setDaemon(False)
-        self.parser = ZhihuHtmlParser.PersonPageParser()
-        self.ui_mode = ui_mode
-        self.downloadimg_queue = []
-        self.start()
-
-    @classmethod
-    def _check_folder(cls, foder_path):
-        """
-        check the path is existed or not, if not, create it
-        folder_path is the name of user. eg. likaifu
-        """
-        
-        absolut_path = ''.join([gl.g_storage_path, '/people/',  foder_path])
-        if not os.path.exists(absolut_path) :
-            os.makedirs(absolut_path)
-        return absolut_path
-
-    def retrieve_image(self):
-        """"""
-        while True:
-            
-            if gl.g_img_queue.empty() and gl.g_retrieve_exit:
-                print "Task compeleted! thread %s exit"%self.name
-                gl.g_http_client.logger.warning("Task compeleted! thread %s exit"%self.name)
-                break
-
-            try:
-                answer = gl.g_img_queue.get(timeout=_GET_QUEUE_TIMEOUT)        
-            except Queue.Empty, e:
-                print 'timeout when get img list in %s thread'%self.name
-                gl.g_http_client.logger.warning('timeout when get img list in %s thread'%self.name) 
-                continue
-
-            folder_path = self._check_folder(answer['user_name'])
-            for url in answer['img_urls']:
-                img_name = url.split('/')[3]
-                file_path = ''.join([folder_path, '/', img_name])
-                if not os.path.exists(file_path):
-                    ret = self.downloader(url, file_path)
-                    if not ret: ret = self.downloader(url, file_path)
-                    if ret and self.ui_mode:  self.downloadimg_queue.append(''.join(['/people/', answer['user_name'], '/', img_name, '\n']))
-                else:
-                    gl.g_http_client.logger.info( "%s is existed"%file_path)
-                    if self.ui_mode : self.downloadimg_queue.append(answer.userlink+'/'+img_name+'\n')
-
-
-
-    @classmethod
-    def downloader(cls, url, path):
-        if not url.startswith('http') : return False
-        try:
-            response = gl.g_http_client.get_html(url)
-            if response['errno'] != ErrorCode.HTTP_OK:
-                response = gl.g_http_client.get_html(url)
-            if response['errno'] != ErrorCode.HTTP_OK:
-                gl.g_http_client.logger.warning("img %s NOT OK" % url)
-                return False
-            data = response['content'][0]
-            tofile = open(path, 'wb')
-            tofile.write(data)
-            tofile.close()
-            gl.g_http_client.logger.info("img %s OK"%url)
-            return True
-        except Exception, e:
-            gl.g_http_client.logger.error( "%s when downloading img %s" % (e, url))
-            print "%s when downloading img %s" % (e, url)
-            return False
-
-    def run(self):
-        self.retrieve_image()
-
-
-class CommentAbs(threading.Thread):
-    """"""
-    _url = '/r/answers/%s/comments'
-
-    def __init__(self, tname):
-
-        threading.Thread.__init__(self, name=tname)
-        self.setDaemon(False)
-        self.start()
-
-    def run(self):
-        """"""  
-        _headers = gl.g_http_client.get_headers()
-        while True:
-
-            if gl.g_answer_comment_queue.empty() and gl.g_comment_exit:
-                print "Task compeleted! thread %s exit"%self.name
-                gl.g_http_client.logger.warning("Task compeleted! thread %s exit"%self.name)
-                break
-            else:
-                try:
-                    [quest, uri, count] = gl.g_answer_comment_queue.get(timeout=_GET_QUEUE_TIMEOUT)
-                except Queue.Empty:
-                    print 'timeout when get comment in %s thread'%self.name
-                    gl.g_http_client.logger.warning('timeout when get comment in %s thread'%self.name)
-                    continue
-                _headers['Referer'] = gl.g_http_client.get_host() + quest
-                cur_page = 1
-                while count > 0:
-                    ret = self.get_comment(quest, uri, cur_page, _headers)
-                    count -= ZhihuHtmlParser.CommentParser.MAX_COMMENT_PER_PAGE
-                    cur_page += 1
-            time.sleep(_COMMET_INTERVAL)
-
-    @classmethod
-    def get_comment(cls, quest, uri, page, headers):
-        """
-        quest is the code of question , such as /question/12345678
-        uri is the code of answer, such as 16202962"""
-        if page > 1:
-            url = gl.g_http_client.get_host() + cls._url%uri + '?page=%s'%page      #'https://www.zhihu.com/r/answers/8720147/comments?page=2'
-        else:
-            url = gl.g_http_client.get_host() + cls._url%uri    #'https://www.zhihu.com/r/answers/8700893/comments'
-        response = gl.g_http_client.get_html(url, header=headers)
-        if response['errno'] != ErrorCode.HTTP_OK:
-            gl.g_http_client.logger.warning("%s when get comment in %s"%(response['errno'],uri))
-            print "%s when get comment at %s"%(response['errno'],uri)
-            return ErrorCode.COMMENT_FAIL
-        ret = ZhihuHtmlParser.CommentParser.ParserHtml(response['content'], uri, url)
-        return ret
-
-
-class UserAbs(threading.Thread):
-    """"""
-    def __init__(self, tname):
-        """"""
-        threading.Thread.__init__(self, name=tname)
-        self.setDaemon(False)
-        self.start()
-
-    @classmethod
-    def get_user(cls, user_url, headers):
-        """
-        :param user_url: /people/peng-quan-xin
-        :return: ErrorCode
-        """
-        refer = gl.g_http_client.get_host() + user_url 
-        headers['Referer'] = refer
-        url = refer + '/about/'
-        response = gl.g_http_client.get_html(url, header=headers)
-        if response['errno'] != ErrorCode.HTTP_OK:
-            gl.g_http_client.logger.warning('%s when visit %s'%(response['errno'], url))
-        ret = ZhihuHtmlParser.PersonPageParser.ParserHtml(response['content'], user_url)
-        return ret
-
-    def run(self):
-        """"""
-        _headers = gl.g_http_client.get_headers()
-        while True:
-            try:
-                if gl.g_user_queue.empty() and gl.g_usr_exit:
-                    print 'Task compeleted, thread %s exit' % self.name
-                    gl.g_http_client.logger.info('Task compeleted, thread %s exit' % self.name)
-                    break
-                try:
-                    user_url = gl.g_user_queue.get(timeout=_GET_QUEUE_TIMEOUT)
-                except Queue.Empty:
-                    print 'timeout when get user url in %s thread'%self.name
-                    gl.g_http_client.logger.warning('timeout when get user url in %s thread'%self.name)
-                    continue
-
-                ret = self.get_user(user_url, _headers)
-                time.sleep(_USER_INTERVAL)
-            except RuntimeError, e :
-                gl.g_http_client.logger.warning(e)
-
-
-
 

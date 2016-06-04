@@ -1,11 +1,13 @@
 ﻿# -*- coding: utf-8 -*-
 
 
-import Global
+from functools import wraps
+import os
 import re
 import json
 import ZhihuLog
 import ErrorCode
+import Global as gl
 import sys
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -49,11 +51,10 @@ class ZhihuUser(object):
 
 class ZhihuQuestion(object):
     """"""
-    def __init__(self, url, title, keywords):
+    def __init__(self, url, title):
         """"""
         self.question_url = url
         self.question_title = title
-        self.keywords = keywords
 
 
 class ZhihuAnswer(object):
@@ -111,120 +112,51 @@ def INT(String):
         return int(String)
 
 
-
-
 class Paser(object):
     """parse kinds of html"""
     
-    _QUESTION_PER_PAGE_BING = 10
-    MAX_QUESTION_PER_SEARCH_PAGE = 10
-    
-    MAX_ANSWERS_PER_PAGE = 10
-    _vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')       #used for judging whether the user with certain user_url 
-                                                                                    #is existed in database or not.
-    MAX_COMMENT_PER_PAGE = 30                                                                                
     
     def __init__(self, *args, **kwargs):
+
+        self._vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')     #used for judging whether the user with certain user_url
+                                                                                           #is existed in database or not.
         return super(CommentParser, self).__init__(*args, **kwargs)
     
-    @classmethod
-    def parse_bing(cls, html):
+    @ZhihuRules.ajax
+    def parse_bing(self, html, method, url, payloads, headers):
         """parse question url and title from html returned by Bing"""
         questions = re.findall(r'<h2><a href="(http(s|)://www.zhihu.com/question/\d{8})".+?>(.+?)</a></h2>', html[0])
         question_count = len(questions)
         for node in questions:
             try:
-                url = node[0]
-                uri = re.findall('/question/\d{8}', url)[0]
+                url_ = node[0]
+                uri = re.findall('\d{8}', url_)[0]
                 title = node[2].decode('utf-8')
 
-                q = ZhihuQuestion(uri, title, '')
-                Global.g_data_queue.put(q)
-                isexisted = Global.g_zhihu_database.is_existed(q)
+                q = ZhihuQuestion(int(uri), title)
+                gl.g_data_queue.put(q)
+                isexisted = gl.g_zhihu_database.is_existed(q)
                 #if not isexisted: 
-                Global.g_question_queue.put(uri)
-                
+                gl.g_url_queue.put(['GET', url_, payloads, headers])           
             except Exception,e :
                 _g_html_logger.error('%s when parse bing html'%e)
-        if question_count < cls._QUESTION_PER_PAGE_BING:
-            #_g_html_logger.warning('Achieve to the end of bing cache')
-            return ErrorCode.ACHIEVE_END
-        return ErrorCode.OK
-        
-    @classmethod
-    def Parser_zhihu(cls, html, keywords, count=None, AJAX=True):
-        '''
-        parse questions' information in html returned by get_html(url) method, and put the Question object into global queue, and write 
-              in database. 
-        parameter: html, list[string], has only one element, which is the resource specified by url   
-                   keywords, string, 
-                   count, int, just tells the parser how many questions need to be parsed under this `keywords`(sorted by default),
-                          if count is not specified, parser will parse questions till the end of the question list of this `keywords`
-        return:  return error code(int), which is the signal to tell upper method to react properly, such as exit loop or continue loop or 
-                 retry once again
-        '''
-        #if count has negative value, return directly
-        if count is not None and count<=0: return ErrorCode.ACHIEVE_USER_SPECIFIED
-        #abstract question node from html
-        if not AJAX:
-            parse = etree.HTML(html[0])
-            question_node = parse.xpath("//li[@class='item clearfix' or 'item clearfix article-item']/div[@class='title']/a")
-        else:
-            question_node = json.loads(html[0])['htmls']
-        question_counts = len(question_node)
-        #if no question node is abstracted, return list_empty_error code
-        if question_counts == 0:
-            _g_html_logger.error("No question in search page, please chech xpath")
-            return ErrorCode.LIST_EMPTY_ERROR
-        num = 0 #initial counter
-        for item in question_node:
-            try:
-                if AJAX:
-                    item = etree.HTML(item).xpath('body/li/div/a')[0]
-                question_url = item.attrib['href']
-                question_title = ''.join(item.xpath('string(.)')) #abstract text which out of tag or in unstardard tag, such as `<a>blabla</b>` 
-
-                if not question_url.startswith('http'): 
-                    q = ZhihuQuestion(question_url, question_title, keywords)
-                    Global.g_data_queue.put(q)
-                    isexisted = Global.g_zhihu_database.is_existed(q)
-                    if not isexisted: Global.g_question_queue.put(q)
-                else:
-                    question_title = question_title + u'(专栏)' #we don't care for special column                   
-                    q = ZhihuQuestion(question_url, question_title, keywords) 
-                    Global.g_data_queue.put(q)
-                    isexisted = Global.g_zhihu_database.is_existed(q)
-                    #if not isexisted: Global.g_question_queue.put(q)
-                
-                num += 1
-                if count is not None and num >= count: #if counter achieves count's value, return 
-                    _g_html_logger.info('%s question count has achieve given value: %s'%(keywords,count))
-                    print '%s question count has achieve given value: %s'%(keywords,count)
-                    return  ErrorCode.ACHIEVE_USER_SPECIFIED
-            except (IndexError, AttributeError), e :
-                _g_html_logger.warning('%s when parser %s'%(e, keywords))
-                print ('%s when parser %s'%(e, keywords))
-
-        if question_counts < cls.MAX_QUESTION_PER_SEARCH_PAGE: #if question count in this html less than standard count, it can be
-                                                                            #considered this html is the last one of this `keywords`
-            _g_html_logger.info('%s Achieve end of the search page!'%keywords)
-            return ErrorCode.ACHIEVE_END  # notify the upper loop to exit
-        return ErrorCode.OK #normal condition    
-        
-    @classmethod
-    def parse_qstn(cls, html, quest_url):
+        return question_count
+            
+    @ZhihuRules.ajax    
+    def parse_qstn(self, html, method, url, payloads, headers):
         """
         @parameters: html, list which has only one element. 
                      quest_url, uniform resource locator, whose format is `/question/\d{8}`, eg. /question/12345678
         this function does two things below,
-             1. when run into answer, push the url of anthor into Global.g_user_queue. and push image url list into Global.g_img_queue
-                and push comment url of this answer int Global.g_answer_comment_queue
+             1. when run into answer, push the url of anthor into gl.g_user_queue. and push image url list into gl.g_img_queue
+                and push comment url of this answer int gl.g_answer_comment_queue
              2. insert answer information into database
-        @return will return error code according to parse result
+        @return answers counts in this html
         """
         AJAX = True if '"r":0' in html[0] else False #specified whether the html has complete html structure ,
                                                      #or has only partial elements, such as json or xml
                                                      #if AJAX==False, means the html[0] has all elements of an complete html page
+        
         
         if not AJAX:
             parse = etree.HTML(html[0])
@@ -233,28 +165,27 @@ class Paser(object):
             answer_nodes = parse.xpath("//div[@class='zm-item-answer  zm-item-expanded']")
         else:
             try:
+                quest_url = int(re.findall(r'(\d{8})', url)[0])
                 answer_nodes = json.loads(html[0])['msg']
                 all_answer_counts = None
             except ValueError, e :
-                _g_html_logger.error('%s when parse %s'%(e, quest_url))
+                _g_html_logger.error('%s when parse %s'%(e, url))
                 all_answer_counts = None
                 answer_nodes = []
         answer_counts = len(answer_nodes)
         
         if answer_counts == 0 and u'"msg": []' not in html[0]:
             _g_html_logger.error("no answer in question page, chech xpath of answer_nodes")
-            Global.g_fail_url.warning(quest_url)
-            return ErrorCode.LIST_EMPTY_ERROR, all_answer_counts
-            # return ErrorCode.LIST_EMPTY_ERROR
-        
-            
+            gl.g_fail_url.warning(url)
+            return ErrorCode.LIST_EMPTY_ERROR
+                    
         for node in answer_nodes:
             try:
                 if AJAX:
                     node = etree.HTML(node).xpath('body')[0].xpath('div')[0]
-                id = node.attrib['data-aid']
-                date = node.attrib['data-created']
-                vote = node.xpath('div/button/span[@class="count"]')[0].text                
+                id = int(node.attrib['data-aid'])
+                date = int(node.attrib['data-created'])
+                vote = INT(node.xpath('div/button/span[@class="count"]')[0].text)               
                 comments = node.xpath('div/div/a[@class="meta-item toggle-comment js-toggleCommentBox"]')[0].xpath('string(.)')
                 comments_count = ''.join(comments)[1:-4]   ##\n62 条评论
                 comment_count = INT(comments_count) if comments_count != '' else 0
@@ -270,7 +201,9 @@ class Paser(object):
                         url = img.attrib['src']
                     img_urls.append(url)
                 # img_urls = [img.attrib['data-original'] for img in img_nodes ]
+
                 hasimg = False if img_urls == [] else True
+
                 # abstract user link and name, then tag the anonymous attribute
                 user_link_node = node.xpath('div/div/a[@class="author-link"]')    
                 if len(user_link_node) != 0:
@@ -281,41 +214,51 @@ class Paser(object):
                     user_url = '/people/anonymous/'
                     is_anonymous = True
                     user_name = 'anonymous'
+
                 # abstract external link
                 external_link_nodes = content_block.xpath('a[@class=" wrap external"]')                
                 ext_links = [link.attrib['href'] for link in external_link_nodes ]
-                answer_url = node.xpath("link")[0].attrib['href'].split('/')[4] # 44370648
+                answer_url = int(node.xpath("link")[0].attrib['href'].split('/')[4]) # 44370648
                                                                
-                answer = ZhihuAnswer(id, date, is_anonymous, user_url, user_name, INT(vote), comment_count, 
+                answer = ZhihuAnswer(id, date, is_anonymous, user_url, user_name, vote, comment_count, 
                                      content,img_urls, ext_links, user_url, quest_url, answer_url, hasimg)
 
-                cls._vuser.user_url = user_url                
-                isexisted = Global.g_zhihu_database.is_existed(answer)
+                self._vuser.user_url = user_url                
+                isexisted = gl.g_zhihu_database.is_existed(answer)
                 if not isexisted:
-                    Global.g_data_queue.put(answer)
+                    gl.g_data_queue.put(answer)
                 if vote != '0' and hasimg and not isexisted:
-                    Global.g_img_queue.put({'user_name': user_name, 'img_urls': img_urls})
+                    rc = [img_urls, None, os.path.join(gl.g_storage_path , user_name)]
+                    gl.g_static_rc.put(rc)
+
                 if not is_anonymous and not isexisted:
-                    if not Global.g_zhihu_database.is_existed(cls._vuser):
-                        Global.g_user_queue.put(user_url)
+                    if not gl.g_zhihu_database.is_existed(self._vuser):
+                        gl.g_url_queue.put(['GET', 
+                                                gl.g_zhihu_host+user_url+'/about/', 
+                                                None, 
+                                                {'Referer': gl.g_zhihu_host+user_url}
+                                               ])
+
                 if comment_count is not 0 and not isexisted:
-                    #Global.g_answer_comment_queue.put([quest_url, answer_url, comment_count])
-                    pass
+                    gl.g_url_queue.put(['GET', 
+                                            gl.g_zhihu_host+'/r/answers/'+answer_url+'/comments',
+                                            None,
+                                            {'Referer': url}
+                                            ])
+
             except Exception, e:
                 print '%s when parser %s'%(e, quest_url)
                 _g_html_logger.warning('%s when parser %s'%(e, quest_url))
-        if answer_counts < cls.MAX_ANSWERS_PER_PAGE:
-            _g_html_logger.info('Achieve end of the answers in %s'%quest_url)
-            return ErrorCode.ACHIEVE_END, all_answer_counts
-        return ErrorCode.OK, all_answer_counts
+
+        return answer_counts
+    
         
-    @classmethod
-    def parse_usr(cls, html, user_url):
+    def parse_usr(self, html, method, url, payloads, headers):
         """
         @parameter: html, returned by GetHtml() method, list with only one element
                    user_url , is the url of user, such as /people/peng-quan-xin    
         @function, parse user's information and insert it into database                 
-        @return error code
+        @return None
         """
         parser = etree.HTML(html[0])
         try:
@@ -376,39 +319,261 @@ class Paser(object):
             user = ZhihuUser(name, g, discr, location, position, business, employ, education,
                              sign, int(followees), int(followers), int(upvote), int(tnks), 
                              int(quest), int(answ), int(post), int(collect), int(logs), weibo_url, usr_url, avatar_url)
-            Global.g_data_queue.put(user)
+            gl.g_data_queue.put(user)
         except Exception, e:
-            _g_html_logger.error("%s when parser %s"%(e, user_url))
-            Global.g_fail_url.warning(user_url)
-            return ErrorCode.USER_INFO_FAIL
-        return 0
+            _g_html_logger.error("%s when parser %s"%(e, url))
+            gl.g_fail_url.warning(url)
+        return None
         
-    @classmethod
-    def parse_cmnt(cls, html, answer_url, url):
+    @ZhihuRules.ajax
+    def parse_cmnt(self, html, method, url, payloads, headers):
         """
-        @param: answer_url is the code of answer, such as 20990037
-                url is the whole url of this comment, such as 'https://www.zhihu.com/r/answers/8720147/comments?page=2'
+        @param: html, list with only one element
+                method, string, http method
+                url is the whole url of this comment, such as 'https://www.zhihu.com/r/answers/8720147/comments'
+                payloads, dict http payload, if method is get, it will be appended to url. such as {'page':2}
+                headers, dict. http headers 
         """
 
         try:
             comment_list = json.loads(html[0])['data']
+            comment_counts = len(comment_list)
+            answer_code = int(re.findall(r'answers/(\d+?)/comments', url)[0])   # format is 20990037
         except Exception, e:
-            _g_html_logger.error('%s when parse comment %s'%(e, answer_url))
-            print '%s when parse comment %s'%(e, answer_url)
-            #TODO write url file
-            Global.g_fail_url.warning(url)
+            _g_html_logger.error('%s when parse comment %s'%(e, answer_code))
+            print '%s when parse comment %s'%(e, answer_code)
+            gl.g_fail_url.warning(url)
             return ErrorCode.COMMENT_FAIL
         for comment in comment_list:
             try:
-                id = comment['id']
-                replyid = comment['inReplyToCommentId']
+                id = int(comment['id'])
+                replyid = int(comment['inReplyToCommentId'])
                 name = comment['author']['name']
                 content = comment['content']
                 likesCount = int(comment['likesCount'])
-                c = ZhihuComment(id, replyid, name, content, likesCount, answer_url)
-                Global.g_data_queue.put(c)
+                c = ZhihuComment(id, replyid, name, content, likesCount, answer_code)
+                gl.g_data_queue.put(c)
 
             except Exception,e:
-                _g_html_logger.error("%s when parser %s"%(e, answer_url))
-            
-        return 0
+                _g_html_logger.error("%s when parser %s"%(e, answer_code))            
+        return comment_counts
+
+
+    def dispatch(self):
+        """fecth data from html queue and put data to database queue, put url to url queue"""
+        if  gl.g_html_queue.empty():
+            return        
+        ele = gl.g_html_queue.get()
+        if ZhihuRules._qst_url.search(ele[2]):
+            ret = self.parse_qstn(*tuple(ele))
+        elif ZhihuRules._cmt_url.search(ele[2]):
+            ret = self.parse_cmnt(*tuple(ele))
+        elif ZhihuRules._bing_url.search(ele[2]):
+            ret = self.parse_bing(*tuple(ele))
+        elif ZhihuRules._usr_url.search(ele[2]) :
+            ret = self.parse_usr(*tuple(ele))
+        if ret is not None:
+            gl.g_url_queue.put(ret)
+
+
+
+
+    @classmethod
+    def Parser_zhihu(cls, html, keywords, count=None, AJAX=True):
+        '''
+        parse questions' information in html returned by get_html(url) method, and put the Question object into global queue, and write 
+              in database. 
+        parameter: html, list[string], has only one element, which is the resource specified by url   
+                   keywords, string, 
+                   count, int, just tells the parser how many questions need to be parsed under this `keywords`(sorted by default),
+                          if count is not specified, parser will parse questions till the end of the question list of this `keywords`
+        return:  return error code(int), which is the signal to tell upper method to react properly, such as exit loop or continue loop or 
+                 retry once again
+        '''
+        #if count has negative value, return directly
+        if count is not None and count<=0: return ErrorCode.ACHIEVE_USER_SPECIFIED
+        #abstract question node from html
+        if not AJAX:
+            parse = etree.HTML(html[0])
+            question_node = parse.xpath("//li[@class='item clearfix' or 'item clearfix article-item']/div[@class='title']/a")
+        else:
+            question_node = json.loads(html[0])['htmls']
+        question_counts = len(question_node)
+        #if no question node is abstracted, return list_empty_error code
+        if question_counts == 0:
+            _g_html_logger.error("No question in search page, please chech xpath")
+            return ErrorCode.LIST_EMPTY_ERROR
+        num = 0 #initial counter
+        for item in question_node:
+            try:
+                if AJAX:
+                    item = etree.HTML(item).xpath('body/li/div/a')[0]
+                question_url = item.attrib['href']
+                question_title = ''.join(item.xpath('string(.)')) #abstract text which out of tag or in unstardard tag, such as `<a>blabla</b>` 
+
+                if not question_url.startswith('http'): 
+                    q = ZhihuQuestion(question_url, question_title, keywords)
+                    gl.g_data_queue.put(q)
+                    isexisted = gl.g_zhihu_database.is_existed(q)
+                    if not isexisted: gl.g_question_queue.put(q)
+                else:
+                    question_title = question_title + u'(专栏)' #we don't care for special column                   
+                    q = ZhihuQuestion(question_url, question_title, keywords) 
+                    gl.g_data_queue.put(q)
+                    isexisted = gl.g_zhihu_database.is_existed(q)
+                    #if not isexisted: gl.g_question_queue.put(q)
+                
+                num += 1
+                if count is not None and num >= count: #if counter achieves count's value, return 
+                    _g_html_logger.info('%s question count has achieve given value: %s'%(keywords,count))
+                    print '%s question count has achieve given value: %s'%(keywords,count)
+                    return  ErrorCode.ACHIEVE_USER_SPECIFIED
+            except (IndexError, AttributeError), e :
+                _g_html_logger.warning('%s when parser %s'%(e, keywords))
+                print ('%s when parser %s'%(e, keywords))
+
+        if question_counts < cls.MAX_QUESTION_PER_SEARCH_PAGE: #if question count in this html less than standard count, it can be
+                                                                            #considered this html is the last one of this `keywords`
+            _g_html_logger.info('%s Achieve end of the search page!'%keywords)
+            return ErrorCode.ACHIEVE_END  # notify the upper loop to exit
+        return ErrorCode.OK #normal condition    
+
+
+
+class Rules(object):
+    """base class for specified rules"""
+
+    @classmethod
+    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
+        """
+        this function is used to generate parameters of next http request by ajax
+        @params: method, http method
+                 url, used to identify different ajax request
+                 payloads, sheetlist of http request
+                 headers, http header
+                 stop_flag, self-define type, used to stop the ajax of this url
+                 kwargs, just for extension 
+        @return  this function must return [method, url, payloads, headers] or None
+        """
+        raise NotImplementedError('method `ajax_rules` must be override in child class')
+        
+    @classmethod
+    def filt_rules(cls, urls, *args, **kwargs):
+        """
+        this function is used to filt the urls in html by cerntain rules
+        @params:
+                urls, list of url
+                args and kwargs are used for extension
+        @return this function must return [[url, payloads, headers], [url, payloads, headers], ....]
+        """
+        raise NotImplementedError('method `filt_rules` must be override in child class')
+
+    @classmethod
+    def ajax(cls, func):
+        """"""
+        @wraps(func)
+        def wrapper(obj, html, method, url, payloads, headers):
+            ret = func(obj, html, method, url, payloads, headers)
+            assert isinstance(ret, int)
+            next = cls.ajax_rules(method, url, payloads, headers, ret)
+            return next
+        return wrapper
+
+    @classmethod
+    def filter(cls, func):
+        """"""
+        @wraps(func)
+        def wrapper(obj, html, urls, payloads, headers, *args, **kwargs):
+            ret = func(obj, html, urls, payloads, headers)
+            assert isinstance(ret, list)
+            ret = cls.filt_rules(urls, *args, **kwargs)
+            return ret
+        return wrapper
+
+
+#if a function is decorated by Rules.ajax, the return value must be integer!!
+class ZhihuRules(Rules):
+    """rules to filt url in html or yield ajax url and payloads"""
+
+    
+    _qst_url = re.compile(r'/question/\d{8}')
+    _cmt_url = re.compile(r'/r/answers/\d+?/comments')
+    _bing_url = re.compile(r'cn.bing.com/search')
+    _usr_url = re.compile(r'about')
+
+    _BING_MAX_ITEM = 10
+    MAX_ANSWERS_PER_PAGE = 10      #max answers per page
+    MAX_COMMENT_PER_PAGE = 30
+    QUESTION_PER_PAGE_BING = 10
+
+    def __init__(self, *args, **kwargs):
+        return super(ZhihuRules, self).__init__(*args, **kwargs)
+
+    @classmethod
+    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
+        """
+        this function is used to generate parameters of next http request by ajax
+        @params: method, http method
+                 url, used to identify different ajax request
+                 payloads, sheetlist of http request
+                 headers, http header
+                 stop_flag, self-define type, used to stop the ajax of this url
+                 kwargs, just for extension 
+        @return  this function must return [method, url, payloads, headers] or None
+                                                            {}
+        """
+        try:
+            if cls._qst_url.search(url):
+                if stop_flag < cls.MAX_ANSWERS_PER_PAGE: 
+                    _g_html_logger.warning('Achieve to the end of question %s'%url)
+                    return None
+                if not payloads is None:
+                    offset = json.loads(payloads['params'])['offset']
+                    payloads['params'] = payloads['params'].replace('%d}'%offset, '%d}'%(offset+10))
+                    ret = ['POST', url, payloads, None]
+                    pass
+                else:
+                    url_token = re.findall(r'\d{8}', url)[0]
+                    _xsrf = gl.g_http_client.account['_xsrf']
+                    url += '/node/QuestionAnswerListV2'     
+                    payloads = {'method': 'next', 'params':'{"url_token":%s,"pagesize":10,"offset":20}'%url_token, '_xsrf':'%s'%_xsrf}
+                    ret = ['POST', url, payloads, None]
+
+            elif cls._cmt_url.search(url):
+                if stop_flag < cls.MAX_COMMENT_PER_PAGE: 
+                    _g_html_logger.warning('Achieve to the end of comments in answser %s'%url)
+                    return None
+                if not payloads is None:
+                    payloads['page'] += 1
+                    ret = ["GET", url, payloads, headers]
+                else:
+                    payloads = {'page':2}
+                    ret = ["GET", url, payloads, headers]
+
+            elif cls._bing_url.search(url):
+                if stop_flag < cls.QUESTION_PER_PAGE_BING: 
+                    _g_html_logger.warning('Achieve to the end of bing cache')
+                    return None
+                payloads['first'] += cls.QUESTION_PER_PAGE_BING
+                ret = ["GET", url, payloads, None]
+            return ret
+        except Exception, e:
+            _g_html_logger.warning('ajax rule error, url is %s, payloads is %s'%(url, str(payloads).decode('unicode-escape')))
+        return None
+
+    @classmethod
+    def filt_rules(cls, urls, *args, **kwargs):
+        pass
+
+
+if __name__ == "__main__":
+
+    print 1
+    class A():
+        @ZhihuRules.ajax
+        def f(self, html, method, url, payloads, headers):
+            return 31
+
+    a = A()
+
+    a.f('', 'GET', 'https://www.zhihu.com/r/answers/8720147/comments', {}, {})

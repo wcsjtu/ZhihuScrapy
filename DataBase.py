@@ -25,7 +25,7 @@ except ImportError:
     import sqlite3 as DB
     from sqlite3 import Error
     _mysql_flag = False
-    _h = '%s' #placeholder for Sqlite3 syntax
+    _h = '?' #placeholder for Sqlite3 syntax
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -71,8 +71,7 @@ class ZhihuDataBase(threading.Thread):
     _user_table_name = 'Users'
     _comment_table_name = 'Comments'
     _QUESTION_TABLE = '''CREATE TABLE %s       (   title      varchar(256),
-                                                   url        varchar(32) ,
-                                                   keywords   char(8),
+                                                   url        int ,
                                                    PRIMARY KEY(url)
                                                 );'''%_question_table_name
     _ANSWER_TABLE = '''CREATE TABLE %s       (   id             int ,
@@ -86,14 +85,14 @@ class ZhihuDataBase(threading.Thread):
                                                  img_urls       text,
                                                  extern_links   text,
                                                  img_folder     varchar(256),
-                                                 question_url   varchar(32),
-                                                 answer_url     varchar(64),
+                                                 question_url   int,
+                                                 answer_url     int,
                                                  PRIMARY KEY(id),
                                                  FOREIGN KEY(question_url) REFERENCES %s(url),
                                                  FOREIGN KEY(user_url) REFERENCES %s(user_url)
                                                 ); '''%(_answer_table_name, _question_table_name, _user_table_name)
     _USER_TABLE = '''CREATE TABLE %s     (   name           varchar(256),
-                                             gender         varchar(32),
+                                             gender         char(2),
                                              discription    text,
                                              location       text,
                                              position       text,
@@ -122,9 +121,10 @@ class ZhihuDataBase(threading.Thread):
                                                  CommentBy      text,
                                                  Content        text,
                                                  Supporters     int,
-                                                 answer_url     varchar(64),
-                                                 PRIMARY KEY(ID)
-                                                ); '''%(_comment_table_name)
+                                                 answer_url     int,
+                                                 PRIMARY KEY(ID) ,
+                                                 FOREIGN KEY(answer_url) REFERENCES %s(answer_url)
+                                                ); '''%(_comment_table_name, _answer_table_name)
 
     _COMMIT_INTEVAL = 300
     #_create_database(_DATABASE_PATH, [_QUESTION_TABLE, _ANSWER_TABLE, _USER_TABLE, _COMMENT_TABLE])
