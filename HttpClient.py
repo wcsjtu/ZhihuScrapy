@@ -34,10 +34,11 @@ class HttpClient(object):
     """"""
     _MAX_LOGIN_LIMIT = 5
 
-    def __init__(self, url, account):
+    def __init__(self):
        
-        self._url = url
-        self.account = account
+        lf.input_account()
+        self._url = gl.g_zhihu_host
+        self.account = gl.g_zhihu_account
         self._verify_code = ""
         self.default_headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; WOW64; rv:46.0) Gecko/20100101 Firefox/46.0",
                                 "connection":"keep-alive"}
@@ -49,9 +50,9 @@ class HttpClient(object):
         #if os.path.exists(gl.g_config_folder+'cookiejar'):
         #    self.session.cookies.load(ignore_discard=True)
             #self.login_success = True        
-        if not self.login_success :
-            self.login()
-            pass
+        #if not self.login_success :
+        #    self.login()
+        #    pass
 
     def get_host(self):
         return self._url
@@ -69,16 +70,16 @@ class HttpClient(object):
                  if occurs connection error or http status is not 200, this function will return None
         """
         try:
-            header = self.default_headers if headers_ is not None else headers_
-            rqst = self.session.request(method=method_, url=url_, data=payloads_, headers=header, timeout=10) 
+            header = self.default_headers if headers_ is None else headers_
+            rqst = self.session.request(method=method_, url=url_, params=payloads_, headers=header, timeout=10) 
             if 'Set-Cookie' in rqst.headers or 'Set-Cookie2' in rqst.headers:
                 self.session.cookies.save(ignore_discard=True)
             if rqst.status_code != 200:
-                rqst = self.session.request(method=method_, url=url_, data=payloads_, headers=header, timeout=10)
+                rqst = self.session.request(method=method_, url=url_, params=payloads_, headers=header, timeout=10)
                 if rqst.status_code != 200:
                     gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
                     return None
-            return [[rqst.content], url_, payloads_, headers_]
+            return [[rqst.content], method_, url_, payloads_, headers_]
 
         except (requests.HTTPError, requests.Timeout, requests.ConnectionError, requests.TooManyRedirects), e: 
             tips = '%s when visit %s '%(e, url) if payload is None else '%s when \
@@ -136,17 +137,16 @@ class HttpClient(object):
         self.account['remember_me'] = "true" 
         uri = "/login/email" if 'email' in self.account else "/login/phone_num"
         login_url = self._url+uri
-        response = self.get_html(self._url)       
+        rqst = self.session.request('GET', self._url)     
         login_counter = 0
         while login_counter <= self._MAX_LOGIN_LIMIT:       
             login_counter += 1  
             try:
-                if 'Set-Cookie' in response['headers'] and '_xsrf' not in self.account:
-                    self.account['_xsrf'] = re.search("_xsrf=(.+?);", \
-                    response['headers']['Set-Cookie']).group(0)[6:]   # '_xsrf=9bfe1f29fc48e124b60a1d80f7272f7a;'
-                response2 = self.get_html(login_url, payload=self.account)
-                if response2['errno'] == ErrorCode.HTTP_OK:
-                    ret_value = json.loads(response2['content'][0])['r']
+                if 'Set-Cookie' in rqst.headers and '_xsrf' not in self.account:
+                    self.account['_xsrf'] = re.findall("_xsrf=(.+?);", rqst.headers['Set-Cookie'])[0]  
+                rqst2 = self.session.request('POST', login_url, params=self.account)
+                if rqst2.status_code == ErrorCode.HTTP_OK:
+                    ret_value = json.loads(rqst2.content)['r']
                     if ret_value == 0:
                         self.logger.error('Succeed to login')
                         self.login_success = True
@@ -169,3 +169,72 @@ class HttpClient(object):
         self._is_init = True
         return False
 
+
+class HtmlClient(threading.Thread):
+    """charged to handle html request and put them into queue"""
+
+    __GET_TIMEOUT = 10
+
+    def __init__(self, name_):
+        
+        self.exit = False
+        self.httpclient = gl.g_http_client
+        self.work_func = gl.g_http_client.get_html
+        super(HtmlClient, self).__init__(name = name_)
+        self.setDaemon(False)
+        self.start()
+
+    def quit(self):
+        """force thread to exit"""
+        self.exit = True
+
+    def run(self):
+        """loop"""
+        while True:
+            if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+                self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
+                print 'task completed! thread %s exit'%self.name
+                break
+
+            if not gl.g_url_queue.empty():
+                try:
+                    ele = gl.g_url_queue.get(timeout=self.__GET_TIMEOUT)
+                    self.work_func(*tuple(ele))
+                except Queue.Empty, e :
+                    self.httpclient.logger.warning('timeout when get url from url queue')
+
+
+class StaticClient(threading.Thread):
+    """charged to handle static resource and store them in file system"""
+
+    __GET_TIMEOUT = 10
+
+    def __init__(self, name_):
+        """"""
+        lf.image_folder()
+        super(StaticClient, self).__init__(name = name_)
+        self.httpclient = gl.g_http_client
+        self.work_func = gl.g_http_client.get_static_rc
+        self.exit = False
+        self.setDaemon(False)
+        self.start()
+
+
+    def quit(self):
+        """force thread to exit"""
+        self.exit = True
+
+    def run(self):
+        """loop"""
+        while True:
+            if (gl.g_url_queue.empty() and gl.g_html_queue.empty() and gl.g_static_rc.empty()) or self.exit:
+                self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
+                print 'task completed! thread %s exit'%self.name
+                break
+
+            if not gl.g_url_queue.empty():
+                try:
+                    ele = gl.g_static_rc.get(timeout=self.__GET_TIMEOUT)
+                    self.work_func(*tuple(ele))
+                except Queue.Empty, e :
+                    self.httpclient.logger.warning('timeout when get url from url queue')

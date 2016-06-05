@@ -2,6 +2,8 @@
 
 
 from functools import wraps
+import multiprocessing
+from multiprocessing import Manager
 import os
 import re
 import json
@@ -16,6 +18,8 @@ try:
     from lxml import etree
 except ImportError:
     print 'Fail to import lib `lxml`'
+    import sys
+    sys.exit()
 
 _g_html_logger = ZhihuLog.creatlogger(__name__)
 
@@ -112,15 +116,144 @@ def INT(String):
         return int(String)
 
 
-class Paser(object):
+class Rules(object):
+    """base class for specified rules"""
+
+    @classmethod
+    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
+        """
+        this function is used to generate parameters of next http request by ajax
+        @params: method, http method
+                 url, used to identify different ajax request
+                 payloads, sheetlist of http request
+                 headers, http header
+                 stop_flag, self-define type, used to stop the ajax of this url
+                 kwargs, just for extension 
+        @return  this function must return [method, url, payloads, headers] or None
+        """
+        raise NotImplementedError('method `ajax_rules` must be override in child class')
+        
+    @classmethod
+    def filt_rules(cls, urls, *args, **kwargs):
+        """
+        this function is used to filt the urls in html by cerntain rules
+        @params:
+                urls, list of url
+                args and kwargs are used for extension
+        @return this function must return [[url, payloads, headers], [url, payloads, headers], ....]
+        """
+        raise NotImplementedError('method `filt_rules` must be override in child class')
+
+    @classmethod
+    def ajax(cls, func):
+        """"""
+        @wraps(func)
+        def wrapper(obj, html, method, url, payloads, headers):
+            ret = func(obj, html, method, url, payloads, headers)
+            assert isinstance(ret, int)
+            next = cls.ajax_rules(method, url, payloads, headers, ret)
+            return next
+        return wrapper
+
+    @classmethod
+    def filter(cls, func):
+        """"""
+        @wraps(func)
+        def wrapper(obj, html, urls, payloads, headers, *args, **kwargs):
+            ret = func(obj, html, urls, payloads, headers)
+            assert isinstance(ret, list)
+            ret = cls.filt_rules(urls, *args, **kwargs)
+            return ret
+        return wrapper
+
+
+#if a function is decorated by Rules.ajax, the return value must be integer!!
+class ZhihuRules(Rules):
+    """rules to filt url in html or yield ajax url and payloads"""
+
+    
+    _qst_url = re.compile(r'/question/\d{8}')
+    _cmt_url = re.compile(r'/r/answers/\d+?/comments')
+    _bing_url = re.compile(r'cn.bing.com')
+    _usr_url = re.compile(r'about')
+
+    _BING_MAX_ITEM = 10
+    MAX_ANSWERS_PER_PAGE = 10      #max answers per page
+    MAX_COMMENT_PER_PAGE = 30
+    QUESTION_PER_PAGE_BING = 10
+
+    def __init__(self, *args, **kwargs):
+        return super(ZhihuRules, self).__init__(*args, **kwargs)
+
+    @classmethod
+    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
+        """
+        this function is used to generate parameters of next http request by ajax
+        @params: method, http method
+                 url, used to identify different ajax request
+                 payloads, sheetlist of http request
+                 headers, http header
+                 stop_flag, self-define type, used to stop the ajax of this url
+                 kwargs, just for extension 
+        @return  this function must return [method, url, payloads, headers] or None
+                                                            {}
+        """
+        try:
+            if cls._qst_url.search(url):
+                if stop_flag < cls.MAX_ANSWERS_PER_PAGE: 
+                    _g_html_logger.warning('Achieve to the end of question %s'%url)
+                    return None
+                if not payloads is None:
+                    offset = json.loads(payloads['params'])['offset']
+                    payloads['params'] = payloads['params'].replace('%d}'%offset, '%d}'%(offset+10))
+                    ret = ['POST', url, payloads, None]
+                    pass
+                else:
+                    url_token = re.findall(r'\d{8}', url)[0]
+                    _xsrf = gl.g_http_client.account['_xsrf']
+                    url += '/node/QuestionAnswerListV2'     
+                    payloads = {'method': 'next', 'params':'{"url_token":%s,"pagesize":10,"offset":20}'%url_token, '_xsrf':'%s'%_xsrf}
+                    ret = ['POST', url, payloads, None]
+
+            elif cls._cmt_url.search(url):
+                if stop_flag < cls.MAX_COMMENT_PER_PAGE: 
+                    _g_html_logger.warning('Achieve to the end of comments in answser %s'%url)
+                    return None
+                if not payloads is None:
+                    payloads['page'] += 1
+                    ret = ["GET", url, payloads, headers]
+                else:
+                    payloads = {'page':2}
+                    ret = ["GET", url, payloads, headers]
+
+            elif cls._bing_url.search(url):
+                if stop_flag < cls.QUESTION_PER_PAGE_BING: 
+                    _g_html_logger.warning('Achieve to the end of bing cache')
+                    return None
+                payloads['first'] += cls.QUESTION_PER_PAGE_BING
+                ret = ["GET", url, payloads, None]
+            return ret
+        except Exception, e:
+            _g_html_logger.warning('ajax rule error, url is %s, payloads is %s'%(url, str(payloads).decode('unicode-escape')))
+        return None
+
+    @classmethod
+    def filt_rules(cls, urls, *args, **kwargs):
+        pass
+
+class Paser(multiprocessing.Process):
     """parse kinds of html"""
     
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, name_):
 
         self._vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')     #used for judging whether the user with certain user_url
                                                                                            #is existed in database or not.
-        return super(CommentParser, self).__init__(*args, **kwargs)
+        super(Paser, self).__init__(name = name_, args=(gl.g_html_queue, ) )
+        self.daemon = True
+        self.exit = False
+        self.start()
+        
     
     @ZhihuRules.ajax
     def parse_bing(self, html, method, url, payloads, headers):
@@ -157,7 +290,7 @@ class Paser(object):
                                                      #or has only partial elements, such as json or xml
                                                      #if AJAX==False, means the html[0] has all elements of an complete html page
         
-        
+        quest_url = int(re.findall(r'(\d{8})', url)[0])
         if not AJAX:
             parse = etree.HTML(html[0])
             all_answer_counts_node = parse.xpath('//h3[@id="zh-question-answer-num"]')
@@ -165,7 +298,6 @@ class Paser(object):
             answer_nodes = parse.xpath("//div[@class='zm-item-answer  zm-item-expanded']")
         else:
             try:
-                quest_url = int(re.findall(r'(\d{8})', url)[0])
                 answer_nodes = json.loads(html[0])['msg']
                 all_answer_counts = None
             except ValueError, e :
@@ -197,6 +329,7 @@ class Paser(object):
                 for img in img_nodes:
                     try:
                         url = img.attrib['data-original']
+                        if not url.startswith('http'): continue
                     except KeyError:
                         url = img.attrib['src']
                     img_urls.append(url)
@@ -228,20 +361,20 @@ class Paser(object):
                 if not isexisted:
                     gl.g_data_queue.put(answer)
                 if vote != '0' and hasimg and not isexisted:
-                    rc = [img_urls, None, os.path.join(gl.g_storage_path , user_name)]
+                    rc = [img_urls, None, os.path.join(gl.g_storage_path , user_url)]
                     gl.g_static_rc.put(rc)
 
                 if not is_anonymous and not isexisted:
                     if not gl.g_zhihu_database.is_existed(self._vuser):
                         gl.g_url_queue.put(['GET', 
-                                                gl.g_zhihu_host+user_url+'/about/', 
+                                                ''.join([gl.g_zhihu_host, user_url, '/about/']),
                                                 None, 
                                                 {'Referer': gl.g_zhihu_host+user_url}
                                                ])
 
                 if comment_count is not 0 and not isexisted:
                     gl.g_url_queue.put(['GET', 
-                                            gl.g_zhihu_host+'/r/answers/'+answer_url+'/comments',
+                                            ''.join([gl.g_zhihu_host, '/r/answers/', str(answer_url), '/comments']),
                                             None,
                                             {'Referer': url}
                                             ])
@@ -283,6 +416,10 @@ class Paser(object):
             # then body content
             avatar_node = body.xpath('img[@class="Avatar Avatar--l"]')[0]
             avatar_url = avatar_node.attrib['srcset'].split(' ')[0]  ####
+
+            gl.g_static_rc.put([ [avatar_url], 
+                                {'Referer':'%s'%url},  
+                                os.path.join(gl.g_storage_path , usr_url)])
         
             total_profile = body.xpath('div/div/div[@class="items"]')[0]
         
@@ -359,11 +496,8 @@ class Paser(object):
         return comment_counts
 
 
-    def dispatch(self):
+    def dispatch(self, ele):
         """fecth data from html queue and put data to database queue, put url to url queue"""
-        if  gl.g_html_queue.empty():
-            return        
-        ele = gl.g_html_queue.get()
         if ZhihuRules._qst_url.search(ele[2]):
             ret = self.parse_qstn(*tuple(ele))
         elif ZhihuRules._cmt_url.search(ele[2]):
@@ -375,7 +509,17 @@ class Paser(object):
         if ret is not None:
             gl.g_url_queue.put(ret)
 
+    def run(self, queue):        
+        while True:
+            #if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+            #    print 'task completed! process %s exit'%self.name
+            #    break
+            if  queue.empty():
+                continue  
+            ele = queue.get()      
+            self.dispatch(ele)
 
+        os._exit(0)
 
 
     @classmethod
@@ -438,142 +582,20 @@ class Paser(object):
             return ErrorCode.ACHIEVE_END  # notify the upper loop to exit
         return ErrorCode.OK #normal condition    
 
+    def quit(self):
+        """force process to exit"""
+        self.exit = True
 
 
-class Rules(object):
-    """base class for specified rules"""
 
-    @classmethod
-    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
-        """
-        this function is used to generate parameters of next http request by ajax
-        @params: method, http method
-                 url, used to identify different ajax request
-                 payloads, sheetlist of http request
-                 headers, http header
-                 stop_flag, self-define type, used to stop the ajax of this url
-                 kwargs, just for extension 
-        @return  this function must return [method, url, payloads, headers] or None
-        """
-        raise NotImplementedError('method `ajax_rules` must be override in child class')
-        
-    @classmethod
-    def filt_rules(cls, urls, *args, **kwargs):
-        """
-        this function is used to filt the urls in html by cerntain rules
-        @params:
-                urls, list of url
-                args and kwargs are used for extension
-        @return this function must return [[url, payloads, headers], [url, payloads, headers], ....]
-        """
-        raise NotImplementedError('method `filt_rules` must be override in child class')
+#if __name__ == "__main__":
 
-    @classmethod
-    def ajax(cls, func):
-        """"""
-        @wraps(func)
-        def wrapper(obj, html, method, url, payloads, headers):
-            ret = func(obj, html, method, url, payloads, headers)
-            assert isinstance(ret, int)
-            next = cls.ajax_rules(method, url, payloads, headers, ret)
-            return next
-        return wrapper
+#    print 1
+#    class A():
+#        @ZhihuRules.ajax
+#        def f(self, html, method, url, payloads, headers):
+#            return 31
 
-    @classmethod
-    def filter(cls, func):
-        """"""
-        @wraps(func)
-        def wrapper(obj, html, urls, payloads, headers, *args, **kwargs):
-            ret = func(obj, html, urls, payloads, headers)
-            assert isinstance(ret, list)
-            ret = cls.filt_rules(urls, *args, **kwargs)
-            return ret
-        return wrapper
+#    a = A()
 
-
-#if a function is decorated by Rules.ajax, the return value must be integer!!
-class ZhihuRules(Rules):
-    """rules to filt url in html or yield ajax url and payloads"""
-
-    
-    _qst_url = re.compile(r'/question/\d{8}')
-    _cmt_url = re.compile(r'/r/answers/\d+?/comments')
-    _bing_url = re.compile(r'cn.bing.com/search')
-    _usr_url = re.compile(r'about')
-
-    _BING_MAX_ITEM = 10
-    MAX_ANSWERS_PER_PAGE = 10      #max answers per page
-    MAX_COMMENT_PER_PAGE = 30
-    QUESTION_PER_PAGE_BING = 10
-
-    def __init__(self, *args, **kwargs):
-        return super(ZhihuRules, self).__init__(*args, **kwargs)
-
-    @classmethod
-    def ajax_rules(cls, method, url, payloads, headers, stop_flag):
-        """
-        this function is used to generate parameters of next http request by ajax
-        @params: method, http method
-                 url, used to identify different ajax request
-                 payloads, sheetlist of http request
-                 headers, http header
-                 stop_flag, self-define type, used to stop the ajax of this url
-                 kwargs, just for extension 
-        @return  this function must return [method, url, payloads, headers] or None
-                                                            {}
-        """
-        try:
-            if cls._qst_url.search(url):
-                if stop_flag < cls.MAX_ANSWERS_PER_PAGE: 
-                    _g_html_logger.warning('Achieve to the end of question %s'%url)
-                    return None
-                if not payloads is None:
-                    offset = json.loads(payloads['params'])['offset']
-                    payloads['params'] = payloads['params'].replace('%d}'%offset, '%d}'%(offset+10))
-                    ret = ['POST', url, payloads, None]
-                    pass
-                else:
-                    url_token = re.findall(r'\d{8}', url)[0]
-                    _xsrf = gl.g_http_client.account['_xsrf']
-                    url += '/node/QuestionAnswerListV2'     
-                    payloads = {'method': 'next', 'params':'{"url_token":%s,"pagesize":10,"offset":20}'%url_token, '_xsrf':'%s'%_xsrf}
-                    ret = ['POST', url, payloads, None]
-
-            elif cls._cmt_url.search(url):
-                if stop_flag < cls.MAX_COMMENT_PER_PAGE: 
-                    _g_html_logger.warning('Achieve to the end of comments in answser %s'%url)
-                    return None
-                if not payloads is None:
-                    payloads['page'] += 1
-                    ret = ["GET", url, payloads, headers]
-                else:
-                    payloads = {'page':2}
-                    ret = ["GET", url, payloads, headers]
-
-            elif cls._bing_url.search(url):
-                if stop_flag < cls.QUESTION_PER_PAGE_BING: 
-                    _g_html_logger.warning('Achieve to the end of bing cache')
-                    return None
-                payloads['first'] += cls.QUESTION_PER_PAGE_BING
-                ret = ["GET", url, payloads, None]
-            return ret
-        except Exception, e:
-            _g_html_logger.warning('ajax rule error, url is %s, payloads is %s'%(url, str(payloads).decode('unicode-escape')))
-        return None
-
-    @classmethod
-    def filt_rules(cls, urls, *args, **kwargs):
-        pass
-
-
-if __name__ == "__main__":
-
-    print 1
-    class A():
-        @ZhihuRules.ajax
-        def f(self, html, method, url, payloads, headers):
-            return 31
-
-    a = A()
-
-    a.f('', 'GET', 'https://www.zhihu.com/r/answers/8720147/comments', {}, {})
+#    a.f('', 'GET', 'https://www.zhihu.com/r/answers/8720147/comments', {}, {})

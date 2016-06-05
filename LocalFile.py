@@ -32,45 +32,10 @@ class LocalImg(threading.Thread):
 
         self._load_img()
 
-def saveini(**kwargs):
-    """save user's configuration to .ini file"""
-
-    if not os.path.exists(gl.g_config_folder):
-        os.mkdir(folder)
-    try:    
-        with open(gl.g_config_folder+'config.ini', 'w') as cfg:
-            for key in kwargs:
-                cfg.write(key+'='+kwargs[key]+'\n')
-                
-    except Exception, e :
-        print 'Fail to save configuration parameters to config.ini, reason: %s'%e
-        
-        
-    
-    
-def loadini():
-    """
-    load configuration parameters from .ini file
-    if all parameters are loaded successfully, this function will return configuration
-    parameters in a dict, else just return empty dict {}
-    """
-    config = {}
-    try:
-        with open(gl.g_config_folder+'config.ini', 'r') as cfg:
-            for line in cfg:
-                [key, value] = line.split('=')
-                config[key] = value[:-1] #kick the '\n' at the end of string `value`
-        assert 'password' and 'remember_me' and 'img_folder' and 'email' or 'phone_num' in config   
-    except Exception, e :
-        print 'Fail to load configuartion parameters, please check config.ini'
-        config = {}
-        
-    finally:
-        return config
-
 
 class IniParser(object):
     """parse and storage configuration informations"""
+
     def __init__(self):
         
         self.cfg_parser = ConfigParser.ConfigParser()
@@ -101,7 +66,8 @@ class IniParser(object):
             os.mkdir(gl.g_config_folder)
 
         for sec in self.sects:
-            self.cfg_parser.add_section(sec)
+            if not self.cfg_parser.has_section(sec):
+                self.cfg_parser.add_section(sec)
             for key in self.sects[sec]:
                 self.cfg_parser.set(sec, key, self.sects[sec][key])
 
@@ -118,6 +84,108 @@ class IniParser(object):
         """       
         self.sects[sec] = kwargs
 
+    def __enter__(self):
+        """base function for `with` syntax"""
+        return IniParser()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """base function for `with` syntax"""
+        self.save()
+
+
+
+def input_account():
+    """
+    method to input account
+    """
+    if gl.g_zhihu_account != {}:
+        print 'current account in config.ini is:'
+        print gl.g_zhihu_account
+        return
+
+    import re
+    email_pattern = "^([a-z0-9A-Z]+[-|\\.]?)+[a-z0-9A-Z]@([a-z0-9A-Z]+(-[a-z0-9A-Z]+)?\\.)+[a-zA-Z]{2,}$"
+    phone_num_pattern = r"^1\d{10}$"
+
+    print "Please entry your ZhiHu account"
+    while True:
+        username = raw_input("username : ")
+        if re.match(email_pattern,username):
+            user_type = "email"
+            break
+        if re.match(phone_num_pattern, username):
+            user_type = "phone_num"
+            break
+        else:
+            print "username is invalid, please input email or mobile phone number!"
+
+    password = raw_input("password : ")
+    gl.g_zhihu_account = {user_type:username, "password":password, 'remember_me':"true"}   
+    with IniParser() as ini:
+        ini.modify('Account', **gl.g_zhihu_account)   
+
+def mysql_params():
+
+    if gl.g_mysql_params != {}:
+        print 'current MySQL parameters in config.ini is:'
+        print gl.g_mysql_params
+        return
+
+    print "input parameters for MySql"
+    gl.g_mysql_params['host'] = raw_input('host : ')
+    gl.g_mysql_params['port'] = int(raw_input('port(default 3306) : '))
+    gl.g_mysql_params['user'] = raw_input('username : ')
+    gl.g_mysql_params['passwd'] = raw_input('password : ')
+    gl.g_mysql_params['db'] = raw_input('database : ')
+    gl.g_mysql_params['charset'] = raw_input('charset(default `utf8`) : ')
+
+    with IniParser() as ini:
+        ini.modify('DataBase', **gl.g_mysql_params)
+
+def image_folder():
+    """"""
+    if gl.g_storage_path is not None:
+        print 'current storage folder is:'
+        print gl.g_storage_path
+        return
+
+    notice = 'please input folder path for storage image.\nmake sure tha disk has enough space\n'
+    folder = raw_input(notice)
+    gl.g_storage_path = folder
+
+    with IniParser() as ini:
+        ini.modify('ImageFolder', **{'folder':gl.g_storage_path})
+
+def loadcfg():
+    """"""
+    cfg = IniParser()
+    if cfg.sects != {}:
+        gl.g_storage_path = cfg.sects['ImageFolder']['folder']
+        gl.g_zhihu_account = cfg.sects['Account']
+        gl.g_mysql_params = cfg.sects['DataBase']
+        gl.g_mysql_params['port'] = int(gl.g_mysql_params['port'])
+    else :       
+        image_folder() 
+        cfg.modify('ImageFolder', **{'folder':gl.g_storage_path})
+        
+        input_account()                        
+        cfg.modify('Account', **gl.g_zhihu_account)
+        
+        mysql_params()
+        cfg.modify('DataBase', **gl.g_mysql_params)
+
+
+
+loadcfg()
+
+if __name__ == "__main__":
+
+    with IniParser() as  ini:
+
+        ini.modify('ImageFolder', **{'folder':'E:/zhihuimg'})
+
+    print 'Done!' 
+        
 
 
 

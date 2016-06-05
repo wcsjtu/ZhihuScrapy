@@ -9,6 +9,7 @@ import sys
 import os
 import threading
 import ErrorCode
+import LocalFile as lf
 import Global as gl
 import ZhihuLog
 from ZhihuHtmlParser import ZhihuAnswer, ZhihuComment, ZhihuQuestion, ZhihuUser
@@ -16,7 +17,6 @@ try:
     import MySQLdb as DB
     from _mysql_exceptions import Error
     from _mysql_exceptions import OperationalError
-    _mysql_flag = True
     _h = '%s' #placeholder for MySQL syntax
 except ImportError:
     print "fail to import site-package `MySQLdb`, check whether it has been installed or not"
@@ -24,7 +24,6 @@ except ImportError:
     #doesn't supoort sqlite3 anymore
     import sqlite3 as DB
     from sqlite3 import Error
-    _mysql_flag = False
     _h = '?' #placeholder for Sqlite3 syntax
 
 reload(sys)
@@ -87,10 +86,12 @@ class ZhihuDataBase(threading.Thread):
                                                  img_folder     varchar(256),
                                                  question_url   int,
                                                  answer_url     int,
-                                                 PRIMARY KEY(id),
-                                                 FOREIGN KEY(question_url) REFERENCES %s(url),
-                                                 FOREIGN KEY(user_url) REFERENCES %s(user_url)
-                                                ); '''%(_answer_table_name, _question_table_name, _user_table_name)
+                                                 PRIMARY KEY(id)                                                                                                
+                                                ); 
+                        ALERT TABLE %s ADD UNIQUE (answer_url);'''%(_answer_table_name, _answer_table_name)
+                        #   ,FOREIGN KEY(question_url) REFERENCES %s(url),  FOREIGN KEY(user_url) REFERENCES %s(user_url)
+                        #    , _question_table_name, _user_table_name
+
     _USER_TABLE = '''CREATE TABLE %s     (   name           varchar(256),
                                              gender         char(2),
                                              discription    text,
@@ -122,36 +123,40 @@ class ZhihuDataBase(threading.Thread):
                                                  Content        text,
                                                  Supporters     int,
                                                  answer_url     int,
-                                                 PRIMARY KEY(ID) ,
-                                                 FOREIGN KEY(answer_url) REFERENCES %s(answer_url)
-                                                ); '''%(_comment_table_name, _answer_table_name)
+                                                 PRIMARY KEY(ID)                                                  
+                                                ); '''%(_comment_table_name)  #,FOREIGN KEY(answer_url) REFERENCES %s(answer_url)  , _answer_table_name
+
+    #how to deal with the problem `ERROR 1452: Cannot add or update a child row: a foreign key constraint fails` when insert data whose parent item is not existed yet.
+    #I can not ensure the parent item is inserted into database before child item all the time. Who can help me? 
+    #In order to run this programme, I have to remove all the foreign key constraint from database. 
 
     _COMMIT_INTEVAL = 300
-    #_create_database(_DATABASE_PATH, [_QUESTION_TABLE, _ANSWER_TABLE, _USER_TABLE, _COMMENT_TABLE])
 
     def __init__(self):
-        threading.Thread.__init__(self, name='database')
+        threading.Thread.__init__(self, name='database')        
+        lf.mysql_params()
         #if _mysql_flag:
         self.database = _create_database([self._QUESTION_TABLE, self._USER_TABLE, 
-                                          self._COMMENT_TABLE, self._ANSWER_TABLE]
+                                          self._ANSWER_TABLE, self._COMMENT_TABLE]
                                         )
         # else:
         #     with DB.connect(self._DATABASE_PATH, check_same_thread=False) as db:
         #         self.database = db
         #         self.database.text_factory = str  
+        self.exit = False
         self.cur = self.database.cursor()
         self.timer = time.time()
         self.setDaemon(False)
-        self._lock = threading.Lock()
-        #self.start()
+        #self._lock = threading.Lock()
+        self.start()
 
     def insert_data(self, instance):
         '''
         parameter: instance, instance of Zhihu data class, such as ZhihuUser, ZhihuComment 
         '''
         if isinstance(instance, ZhihuQuestion):
-            data = (instance.question_title, instance.question_url, instance.keywords)
-            cmd = r'''INSERT INTO %s VALUES (%s,%s,%s)'''%(self._question_table_name, _h, _h, _h)
+            data = (instance.question_title, instance.question_url)
+            cmd = r'''INSERT INTO %s VALUES (%s,%s)'''%(self._question_table_name, _h, _h)
             
         elif isinstance(instance, ZhihuAnswer):
             data = (instance.id, instance.date, int(instance.is_anonymous), instance.user_url, instance.user_name, instance.vote, instance.comment_count, instance.content,
@@ -171,13 +176,14 @@ class ZhihuDataBase(threading.Thread):
                                              _h,_h,_h,_h,_h,_h)
 
         try:
-            self._lock.acquire(True)  
+            #self._lock.acquire(True)  
             ret = self.cur.execute(cmd, data)
             #self.database.commit()            
         except Error, e :
             _g_database_logger.warning("insert data error, reason: %s"%e.message)
         finally:
-            self._lock.release()
+            #self._lock.release()
+            pass
 
     def write(self):
         """insert data into database continuously"""
@@ -190,7 +196,7 @@ class ZhihuDataBase(threading.Thread):
                     instance = gl.g_data_queue.get()
                     self.insert_data(instance)
             
-                if gl.g_question_exit and gl.g_retrieve_exit and gl.g_usr_exit and gl.g_comment_exit and gl.g_data_queue.empty():
+                if (gl.g_url_queue.empty() and gl.g_data_queue.empty() and gl.g_html_queue.empty()) or self.exit:
                     _g_database_logger.warning("Task Compeleted, database thread exit")
                     break
             except Exception, e :
@@ -222,14 +228,14 @@ class ZhihuDataBase(threading.Thread):
         fts = "WHERE %s"%filters if filters is not None else ""
         cmd = r'''SELECT %s FROM %s %s'''%(cl, tbn, fts)
         try:
-            self._lock.acquire(True)
+            #self._lock.acquire(True)
             self.cur.execute(cmd)
             data = self.cur.fetchall()            
         except Error, e:
             _g_database_logger.warning('read data error, reason: %s'%e)
-            data = []
+            data = ()
         finally:
-            self._lock.release()
+            #self._lock.release()
             return data
             
     def is_existed(self, instance):
@@ -246,8 +252,13 @@ class ZhihuDataBase(threading.Thread):
         elif isinstance(instance, ZhihuQuestion):
             data = self.read(self._question_table_name, "url='%s' limit 1"%instance.question_url, ['url'])
             
-        return True if data != [] else False    
+        return True if data != () else False    
             
+
+    def quit(self):
+        """force thread to exit"""
+        self.exit = True
+
 
     def run(self):
         self.write()
