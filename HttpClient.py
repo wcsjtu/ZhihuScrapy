@@ -50,9 +50,9 @@ class HttpClient(object):
         #if os.path.exists(gl.g_config_folder+'cookiejar'):
         #    self.session.cookies.load(ignore_discard=True)
             #self.login_success = True        
-        #if not self.login_success :
-        #    self.login()
-        #    pass
+        if not self.login_success :
+            #self.login()
+            pass
 
     def get_host(self):
         return self._url
@@ -82,10 +82,10 @@ class HttpClient(object):
             return [[rqst.content], method_, url_, payloads_, headers_]
 
         except (requests.HTTPError, requests.Timeout, requests.ConnectionError, requests.TooManyRedirects), e: 
-            tips = '%s when visit %s '%(e, url) if payload is None else '%s when \
-                    visit %s with data %s'%(e, url, str(payload).decode('unicode_escape'))
+            tips = '%s when visit %s '%(e, url) if payloads_ is None else '%s when \
+                    visit %s with data %s'%(e, url, str(payloads_).decode('unicode_escape'))
             self.logger.error(tips)
-            gl.g_fail_url.warning('%s %s'%(url, str(payload)))
+            gl.g_fail_url.warning('%s %s'%(url, str(payloads_)))
             return None
                  
     def get_html(self, method_, url_, payloads_, headers_):
@@ -122,18 +122,19 @@ class HttpClient(object):
     def _get_veri_code(self):
         """to get captcha"""
         url = "https://www.zhihu.com/captcha.gif?r=1462615220376&type=login"
-        response = self.get_html(url)
-        if response['errno'] != ErrorCode.HTTP_OK:
+        rqst = self.session.request('GET', url) 
+        if rqst.status_code != ErrorCode.HTTP_OK:
             self.logger.error("Fail to get captcha!")
             return False
         else:
             captcha = open('captcha.gif','wb')
-            captcha.write(response['content'][0])
+            captcha.write(rqst.content)
             captcha.close()
             return True
 
     def login(self):
         """"""
+        if self.login_success: return True
         self.account['remember_me'] = "true" 
         uri = "/login/email" if 'email' in self.account else "/login/phone_num"
         login_url = self._url+uri
@@ -150,7 +151,8 @@ class HttpClient(object):
                     if ret_value == 0:
                         self.logger.error('Succeed to login')
                         self.login_success = True
-                        self._is_init = True
+                        self._is_init = True    
+                        login_counter = self._MAX_LOGIN_LIMIT
                         return True
                     else:
                         ret = self._get_veri_code()
@@ -168,6 +170,7 @@ class HttpClient(object):
         self.login_success = False
         self._is_init = True
         return False
+gl.g_http_client = HttpClient()
 
 
 class HtmlClient(threading.Thread):

@@ -130,7 +130,7 @@ class ZhihuDataBase(threading.Thread):
     #I can not ensure the parent item is inserted into database before child item all the time. Who can help me? 
     #In order to run this programme, I have to remove all the foreign key constraint from database. 
 
-    _COMMIT_INTEVAL = 300
+    _COMMIT_INTEVAL = 30
 
     def __init__(self):
         threading.Thread.__init__(self, name='database')        
@@ -264,6 +264,7 @@ class ZhihuDataBase(threading.Thread):
         self.write()
 
 
+gl.g_zhihu_database = ZhihuDataBase()
 
 
 

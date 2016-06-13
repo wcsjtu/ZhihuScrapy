@@ -10,14 +10,16 @@ import DataBase
 import ZhihuLog
 
 
+
+
 if __name__ == '__main__':
 
-    from ZhihuHtmlParser import ZhihuQuestion, ZhihuAnswer, ZhihuUser, Paser
+    from ZhihuHtmlParser import ZhihuQuestion, ZhihuAnswer, ZhihuUser, ZhihuPaser
 
     
-    gl.g_fail_url = ZhihuLog.creatlogger('%s_FailURL'%datetime.datetime.now().strftime('%Y-%m-%d'))
+    
             
-    gl.g_http_client = HttpClient() 
+     
     #gl.g_http_client.login()
     print 'create HttpClient instance'
     # controller = Control.Control()
@@ -37,11 +39,12 @@ if __name__ == '__main__':
     gl.g_url_queue.put(u1)
     #gl.g_url_queue.put(u3)
 
-    gl.g_zhihu_database = DataBase.ZhihuDataBase()
+    
+    print 'main', gl.g_zhihu_database
     htmldownloader = HtmlClient(name_ = 'Html')
     imgdownloader = StaticClient(name_ = 'Image')
 
-    parser = Paser(name_ = 'Parser')
+    parser = ZhihuPaser(name_ = 'Parser')
 
 
     while True:

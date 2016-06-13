@@ -60,8 +60,8 @@ class IniParser(object):
                     
     def save(self):
         """"""
-        if self.sects == {}:
-            return
+        #if self.sects == {}:
+        #    return
         if not os.path.exists(gl.g_config_folder):
             os.mkdir(gl.g_config_folder)
 
@@ -86,7 +86,7 @@ class IniParser(object):
 
     def __enter__(self):
         """base function for `with` syntax"""
-        return IniParser()
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """base function for `with` syntax"""

@@ -148,8 +148,8 @@ class Rules(object):
     def ajax(cls, func):
         """"""
         @wraps(func)
-        def wrapper(obj, html, method, url, payloads, headers):
-            ret = func(obj, html, method, url, payloads, headers)
+        def wrapper(obj, html, method, url, payloads, headers, queue_dict):
+            ret = func(obj, html, method, url, payloads, headers, queue_dict)
             assert isinstance(ret, int)
             next = cls.ajax_rules(method, url, payloads, headers, ret)
             return next
@@ -166,6 +166,24 @@ class Rules(object):
             return ret
         return wrapper
 
+
+class ParserProc(multiprocessing.Process):
+    """base class for parser process"""
+    def __init__(self, name_ ):
+        super(ParserProc, self).__init__(name = name_)
+        self.daemon = True
+        self.exit = False
+        self._args = ({'html_queue': gl.g_html_queue,
+                        'url_queue': gl.g_url_queue,
+                        'data_queue': gl.g_data_queue,
+                        'static_rc': gl.g_static_rc},
+                     )
+        self._target = self.work
+
+
+    def work(self, kwargs):
+        """work function in this process"""
+        raise NotImplementedError('method `work` must be override in child class')
 
 #if a function is decorated by Rules.ajax, the return value must be integer!!
 class ZhihuRules(Rules):
@@ -241,22 +259,21 @@ class ZhihuRules(Rules):
     def filt_rules(cls, urls, *args, **kwargs):
         pass
 
-class Paser(multiprocessing.Process):
+
+
+class ZhihuPaser(ParserProc):
     """parse kinds of html"""
     
     
-    def __init__(self, name_):
+    def __init__(self, name_ = 'Parser'):
 
-        self._vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')     #used for judging whether the user with certain user_url
-                                                                                           #is existed in database or not.
-        super(Paser, self).__init__(name = name_, args=(gl.g_html_queue, ) )
-        self.daemon = True
-        self.exit = False
+        self._vuser = ZhihuUser('','','','','','','','','',0,0,0,0,0,0,0,0,0,'','','')     #used for judging whether the user with certain user_url                                                                                           #is existed in database or not.
+        super(ZhihuPaser, self).__init__(name_)
         self.start()
         
     
     @ZhihuRules.ajax
-    def parse_bing(self, html, method, url, payloads, headers):
+    def parse_bing(self, html, method, url, payloads, headers, kwargs):
         """parse question url and title from html returned by Bing"""
         questions = re.findall(r'<h2><a href="(http(s|)://www.zhihu.com/question/\d{8})".+?>(.+?)</a></h2>', html[0])
         question_count = len(questions)
@@ -267,16 +284,18 @@ class Paser(multiprocessing.Process):
                 title = node[2].decode('utf-8')
 
                 q = ZhihuQuestion(int(uri), title)
-                gl.g_data_queue.put(q)
+                #gl.g_data_queue.put(q)
+                kwargs['data_queue'].put(q)
                 isexisted = gl.g_zhihu_database.is_existed(q)
                 #if not isexisted: 
-                gl.g_url_queue.put(['GET', url_, payloads, headers])           
+                #gl.g_url_queue.put(['GET', url_, payloads, headers])       
+                kwargs['url_queue'].put(['GET', url_, None, headers])    
             except Exception,e :
                 _g_html_logger.error('%s when parse bing html'%e)
         return question_count
             
     @ZhihuRules.ajax    
-    def parse_qstn(self, html, method, url, payloads, headers):
+    def parse_qstn(self, html, method, url, payloads, headers, kwargs):
         """
         @parameters: html, list which has only one element. 
                      quest_url, uniform resource locator, whose format is `/question/\d{8}`, eg. /question/12345678
@@ -359,21 +378,22 @@ class Paser(multiprocessing.Process):
                 self._vuser.user_url = user_url                
                 isexisted = gl.g_zhihu_database.is_existed(answer)
                 if not isexisted:
-                    gl.g_data_queue.put(answer)
+                    #gl.g_data_queue.put(answer)
+                    kwargs['data_queue'].put(answer)
                 if vote != '0' and hasimg and not isexisted:
                     rc = [img_urls, None, os.path.join(gl.g_storage_path , user_url)]
                     gl.g_static_rc.put(rc)
 
                 if not is_anonymous and not isexisted:
                     if not gl.g_zhihu_database.is_existed(self._vuser):
-                        gl.g_url_queue.put(['GET', 
+                        kwargs['url_queue'].put(['GET', 
                                                 ''.join([gl.g_zhihu_host, user_url, '/about/']),
                                                 None, 
                                                 {'Referer': gl.g_zhihu_host+user_url}
                                                ])
 
                 if comment_count is not 0 and not isexisted:
-                    gl.g_url_queue.put(['GET', 
+                    kwargs['url_queue'].put(['GET', 
                                             ''.join([gl.g_zhihu_host, '/r/answers/', str(answer_url), '/comments']),
                                             None,
                                             {'Referer': url}
@@ -386,7 +406,7 @@ class Paser(multiprocessing.Process):
         return answer_counts
     
         
-    def parse_usr(self, html, method, url, payloads, headers):
+    def parse_usr(self, html, method, url, payloads, headers, kwargs):
         """
         @parameter: html, returned by GetHtml() method, list with only one element
                    user_url , is the url of user, such as /people/peng-quan-xin    
@@ -456,14 +476,15 @@ class Paser(multiprocessing.Process):
             user = ZhihuUser(name, g, discr, location, position, business, employ, education,
                              sign, int(followees), int(followers), int(upvote), int(tnks), 
                              int(quest), int(answ), int(post), int(collect), int(logs), weibo_url, usr_url, avatar_url)
-            gl.g_data_queue.put(user)
+            #gl.g_data_queue.put(user)
+            kwargs['data_queue'].put(user)
         except Exception, e:
             _g_html_logger.error("%s when parser %s"%(e, url))
             gl.g_fail_url.warning(url)
         return None
         
     @ZhihuRules.ajax
-    def parse_cmnt(self, html, method, url, payloads, headers):
+    def parse_cmnt(self, html, method, url, payloads, headers, kwargs):
         """
         @param: html, list with only one element
                 method, string, http method
@@ -489,98 +510,48 @@ class Paser(multiprocessing.Process):
                 content = comment['content']
                 likesCount = int(comment['likesCount'])
                 c = ZhihuComment(id, replyid, name, content, likesCount, answer_code)
-                gl.g_data_queue.put(c)
-
+                #gl.g_data_queue.put(c)
+                kwargs['data_queue'].put(c)
             except Exception,e:
                 _g_html_logger.error("%s when parser %s"%(e, answer_code))            
         return comment_counts
 
 
-    def dispatch(self, ele):
+    def dispatch(self, ele, kwargs):
         """fecth data from html queue and put data to database queue, put url to url queue"""
         if ZhihuRules._qst_url.search(ele[2]):
-            ret = self.parse_qstn(*tuple(ele))
+            ret = self.parse_qstn(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
         elif ZhihuRules._cmt_url.search(ele[2]):
-            ret = self.parse_cmnt(*tuple(ele))
+            ret = self.parse_cmnt(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
         elif ZhihuRules._bing_url.search(ele[2]):
-            ret = self.parse_bing(*tuple(ele))
+            ret = self.parse_bing(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
         elif ZhihuRules._usr_url.search(ele[2]) :
-            ret = self.parse_usr(*tuple(ele))
+            ret = self.parse_usr(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
         if ret is not None:
-            gl.g_url_queue.put(ret)
+            kwargs['url_queue'].put(ret)
 
-    def run(self, queue):        
+
+    def work(self, kwargs):
+        """
+        @params: kwargs['html_queue'] = gl.g_html_queue
+                 kwargs['url_queue'] = gl.g_url_queue
+                 kwargs['data_queue'] = gl.g_data_queue
+                 kwargs['static_rc'] = gl.g_static_rc
+        """
+        print 'sub: ', gl.g_zhihu_database
+        print 'sub: ', gl.g_http_client.login_success
+        print 'sub: ', gl.g_mysql_params
+        html_queue = kwargs['html_queue']
+        url_queue = kwargs['url_queue']
         while True:
-            #if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
-            #    print 'task completed! process %s exit'%self.name
-            #    break
-            if  queue.empty():
-                continue  
-            ele = queue.get()      
-            self.dispatch(ele)
+            if url_queue.empty() and html_queue.empty() or self.exit:
+                print 'task completed! process %s exit'%self.name
+                os._exit(0) 
+            ele = html_queue.get()
+            print ele[2]
+            self.dispatch(ele, kwargs)          
+        os._exit(0) 
 
-        os._exit(0)
-
-
-    @classmethod
-    def Parser_zhihu(cls, html, keywords, count=None, AJAX=True):
-        '''
-        parse questions' information in html returned by get_html(url) method, and put the Question object into global queue, and write 
-              in database. 
-        parameter: html, list[string], has only one element, which is the resource specified by url   
-                   keywords, string, 
-                   count, int, just tells the parser how many questions need to be parsed under this `keywords`(sorted by default),
-                          if count is not specified, parser will parse questions till the end of the question list of this `keywords`
-        return:  return error code(int), which is the signal to tell upper method to react properly, such as exit loop or continue loop or 
-                 retry once again
-        '''
-        #if count has negative value, return directly
-        if count is not None and count<=0: return ErrorCode.ACHIEVE_USER_SPECIFIED
-        #abstract question node from html
-        if not AJAX:
-            parse = etree.HTML(html[0])
-            question_node = parse.xpath("//li[@class='item clearfix' or 'item clearfix article-item']/div[@class='title']/a")
-        else:
-            question_node = json.loads(html[0])['htmls']
-        question_counts = len(question_node)
-        #if no question node is abstracted, return list_empty_error code
-        if question_counts == 0:
-            _g_html_logger.error("No question in search page, please chech xpath")
-            return ErrorCode.LIST_EMPTY_ERROR
-        num = 0 #initial counter
-        for item in question_node:
-            try:
-                if AJAX:
-                    item = etree.HTML(item).xpath('body/li/div/a')[0]
-                question_url = item.attrib['href']
-                question_title = ''.join(item.xpath('string(.)')) #abstract text which out of tag or in unstardard tag, such as `<a>blabla</b>` 
-
-                if not question_url.startswith('http'): 
-                    q = ZhihuQuestion(question_url, question_title, keywords)
-                    gl.g_data_queue.put(q)
-                    isexisted = gl.g_zhihu_database.is_existed(q)
-                    if not isexisted: gl.g_question_queue.put(q)
-                else:
-                    question_title = question_title + u'(专栏)' #we don't care for special column                   
-                    q = ZhihuQuestion(question_url, question_title, keywords) 
-                    gl.g_data_queue.put(q)
-                    isexisted = gl.g_zhihu_database.is_existed(q)
-                    #if not isexisted: gl.g_question_queue.put(q)
-                
-                num += 1
-                if count is not None and num >= count: #if counter achieves count's value, return 
-                    _g_html_logger.info('%s question count has achieve given value: %s'%(keywords,count))
-                    print '%s question count has achieve given value: %s'%(keywords,count)
-                    return  ErrorCode.ACHIEVE_USER_SPECIFIED
-            except (IndexError, AttributeError), e :
-                _g_html_logger.warning('%s when parser %s'%(e, keywords))
-                print ('%s when parser %s'%(e, keywords))
-
-        if question_counts < cls.MAX_QUESTION_PER_SEARCH_PAGE: #if question count in this html less than standard count, it can be
-                                                                            #considered this html is the last one of this `keywords`
-            _g_html_logger.info('%s Achieve end of the search page!'%keywords)
-            return ErrorCode.ACHIEVE_END  # notify the upper loop to exit
-        return ErrorCode.OK #normal condition    
 
     def quit(self):
         """force process to exit"""
