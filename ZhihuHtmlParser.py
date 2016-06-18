@@ -181,7 +181,7 @@ class ParserProc(multiprocessing.Process):
         self._target = self.work
 
 
-    def work(self, kwargs):
+    def work(self, proc_queue):
         """work function in this process"""
         raise NotImplementedError('method `work` must be override in child class')
 
@@ -273,8 +273,23 @@ class ZhihuPaser(ParserProc):
         
     
     @ZhihuRules.ajax
-    def parse_bing(self, html, method, url, payloads, headers, kwargs):
-        """parse question url and title from html returned by Bing"""
+    def parse_bing(self, html, method, url, payloads, headers, proc_queue):
+        """
+        parse question url and title from html returned by Bing
+        @params: html, list. it has only one element, and type(html) is list, type(html[0]) is string or unicode
+                 method, string. http method, one of 'GET', 'POST', 'PUT', 'OPTION', 'HEAD'
+                 url, string. resource's url, without any query parameters, such as 'https://cn.bing.com/search', rather than 'https://cn.bing.com/search?q=keywords'
+                 payloads, dict or None. http payloads
+                 headers, dict or None.  http request headers
+                 proc_queue, dict. queues between two different process to share memeories. Its format is {'html_queue': gl.g_html_queue,
+                                                                                                           'url_queue': gl.g_url_queue,
+                                                                                                           'data_queue': gl.g_data_queue,
+                                                                                                           'static_rc': gl.g_static_rc}      
+        @return: if method is decorated by `ajax` decorator, an integer type value must be returned. If not, an AssertionException will be raised.
+                 if method is decorated by 'filt' decorator, a list, whose format is [[method, url, payloads, headers], ...] must be returned.
+                 if these is no decorator, return None.
+                 so, this method return an integer value, which means the count of entrie in current html[0]. It will determine the action of ajax rule
+        """
         questions = re.findall(r'<h2><a href="(http(s|)://www.zhihu.com/question/\d{8})".+?>(.+?)</a></h2>', html[0])
         question_count = len(questions)
         for node in questions:
@@ -285,25 +300,32 @@ class ZhihuPaser(ParserProc):
 
                 q = ZhihuQuestion(int(uri), title)
                 #gl.g_data_queue.put(q)
-                kwargs['data_queue'].put(q)
+                proc_queue['data_queue'].put(q)
                 isexisted = gl.g_zhihu_database.is_existed(q)
                 #if not isexisted: 
                 #gl.g_url_queue.put(['GET', url_, payloads, headers])       
-                kwargs['url_queue'].put(['GET', url_, None, headers])    
+                proc_queue['url_queue'].put(['GET', url_, None, headers])    
             except Exception,e :
                 _g_html_logger.error('%s when parse bing html'%e)
         return question_count
             
     @ZhihuRules.ajax    
-    def parse_qstn(self, html, method, url, payloads, headers, kwargs):
+    def parse_qstn(self, html, method, url, payloads, headers, proc_queue):
         """
-        @parameters: html, list which has only one element. 
-                     quest_url, uniform resource locator, whose format is `/question/\d{8}`, eg. /question/12345678
-        this function does two things below,
-             1. when run into answer, push the url of anthor into gl.g_user_queue. and push image url list into gl.g_img_queue
-                and push comment url of this answer int gl.g_answer_comment_queue
-             2. insert answer information into database
-        @return answers counts in this html
+        parse question url and title from html returned by Bing
+        @params: html, list. it has only one element, and type(html) is list, type(html[0]) is string or unicode
+                 method, string. http method, one of 'GET', 'POST', 'PUT', 'OPTION', 'HEAD'
+                 url, string. resource's url, without any query parameters, such as 'https://cn.bing.com/search', rather than 'https://cn.bing.com/search?q=keywords'
+                 payloads, dict or None. http payloads
+                 headers, dict or None.  http request headers
+                 proc_queue, dict. queues between two different process to share memeories. Its format is {'html_queue': gl.g_html_queue,
+                                                                                                           'url_queue': gl.g_url_queue,
+                                                                                                           'data_queue': gl.g_data_queue,
+                                                                                                           'static_rc': gl.g_static_rc}      
+        @return: if method is decorated by `ajax` decorator, an integer type value must be returned. If not, an AssertionException will be raised.
+                 if method is decorated by 'filt' decorator, a list, whose format is [[method, url, payloads, headers], ...] must be returned.
+                 if these is no decorator, return None.
+                 so, this method return an integer value, which means the count of entrie in current html[0]. It will determine the action of ajax rule
         """
         AJAX = True if '"r":0' in html[0] else False #specified whether the html has complete html structure ,
                                                      #or has only partial elements, such as json or xml
@@ -379,25 +401,25 @@ class ZhihuPaser(ParserProc):
                 isexisted = gl.g_zhihu_database.is_existed(answer)
                 if not isexisted:
                     #gl.g_data_queue.put(answer)
-                    kwargs['data_queue'].put(answer)
+                    proc_queue['data_queue'].put(answer)
                 if vote != '0' and hasimg and not isexisted:
                     rc = [img_urls, None, os.path.join(gl.g_storage_path , user_url)]
                     gl.g_static_rc.put(rc)
 
                 if not is_anonymous and not isexisted:
                     if not gl.g_zhihu_database.is_existed(self._vuser):
-                        kwargs['url_queue'].put(['GET', 
-                                                ''.join([gl.g_zhihu_host, user_url, '/about/']),
-                                                None, 
-                                                {'Referer': gl.g_zhihu_host+user_url}
-                                               ])
+                        proc_queue['url_queue'].put(['GET', 
+                                                     ''.join([gl.g_zhihu_host, user_url, '/about/']),
+                                                     None, 
+                                                     {'Referer': gl.g_zhihu_host+user_url}
+                                                   ])
 
                 if comment_count is not 0 and not isexisted:
-                    kwargs['url_queue'].put(['GET', 
-                                            ''.join([gl.g_zhihu_host, '/r/answers/', str(answer_url), '/comments']),
-                                            None,
-                                            {'Referer': url}
-                                            ])
+                    proc_queue['url_queue'].put(['GET', 
+                                                 ''.join([gl.g_zhihu_host, '/r/answers/', str(answer_url), '/comments']),
+                                                 None,
+                                                 {'Referer': url}
+                                               ])
 
             except Exception, e:
                 print '%s when parser %s'%(e, quest_url)
@@ -406,12 +428,22 @@ class ZhihuPaser(ParserProc):
         return answer_counts
     
         
-    def parse_usr(self, html, method, url, payloads, headers, kwargs):
+    def parse_usr(self, html, method, url, payloads, headers, proc_queue):
         """
-        @parameter: html, returned by GetHtml() method, list with only one element
-                   user_url , is the url of user, such as /people/peng-quan-xin    
-        @function, parse user's information and insert it into database                 
-        @return None
+        parse question url and title from html returned by Bing
+        @params: html, list. it has only one element, and type(html) is list, type(html[0]) is string or unicode
+                 method, string. http method, one of 'GET', 'POST', 'PUT', 'OPTION', 'HEAD'
+                 url, string. resource's url, without any query parameters, such as 'https://cn.bing.com/search', rather than 'https://cn.bing.com/search?q=keywords'
+                 payloads, dict or None. http payloads
+                 headers, dict or None.  http request headers
+                 proc_queue, dict. queues between two different process to share memeories. Its format is {'html_queue': gl.g_html_queue,
+                                                                                                           'url_queue': gl.g_url_queue,
+                                                                                                           'data_queue': gl.g_data_queue,
+                                                                                                           'static_rc': gl.g_static_rc}      
+        @return: if method is decorated by `ajax` decorator, an integer type value must be returned. If not, an AssertionException will be raised.
+                 if method is decorated by 'filt' decorator, a list, whose format is [[method, url, payloads, headers], ...] must be returned.
+                 if these is no decorator, return None.
+                 so, this method return None
         """
         parser = etree.HTML(html[0])
         try:
@@ -477,20 +509,29 @@ class ZhihuPaser(ParserProc):
                              sign, int(followees), int(followers), int(upvote), int(tnks), 
                              int(quest), int(answ), int(post), int(collect), int(logs), weibo_url, usr_url, avatar_url)
             #gl.g_data_queue.put(user)
-            kwargs['data_queue'].put(user)
+            proc_queue['data_queue'].put(user)
         except Exception, e:
             _g_html_logger.error("%s when parser %s"%(e, url))
             gl.g_fail_url.warning(url)
         return None
         
     @ZhihuRules.ajax
-    def parse_cmnt(self, html, method, url, payloads, headers, kwargs):
+    def parse_cmnt(self, html, method, url, payloads, headers, proc_queue):
         """
-        @param: html, list with only one element
-                method, string, http method
-                url is the whole url of this comment, such as 'https://www.zhihu.com/r/answers/8720147/comments'
-                payloads, dict http payload, if method is get, it will be appended to url. such as {'page':2}
-                headers, dict. http headers 
+        parse question url and title from html returned by Bing
+        @params: html, list. it has only one element, and type(html) is list, type(html[0]) is string or unicode
+                 method, string. http method, one of 'GET', 'POST', 'PUT', 'OPTION', 'HEAD'
+                 url, string. resource's url, without any query parameters, such as 'https://cn.bing.com/search', rather than 'https://cn.bing.com/search?q=keywords'
+                 payloads, dict or None. http payloads
+                 headers, dict or None.  http request headers
+                 proc_queue, dict. queues between two different process to share memeories. Its format is {'html_queue': gl.g_html_queue,
+                                                                                                           'url_queue': gl.g_url_queue,
+                                                                                                           'data_queue': gl.g_data_queue,
+                                                                                                           'static_rc': gl.g_static_rc}      
+        @return: if method is decorated by `ajax` decorator, an integer type value must be returned. If not, an AssertionException will be raised.
+                 if method is decorated by 'filt' decorator, a list, whose format is [[method, url, payloads, headers], ...] must be returned.
+                 if these is no decorator, return None.
+                 so, this method return an integer value, which means the count of entrie in current html[0]. It will determine the action of ajax rule
         """
 
         try:
@@ -511,45 +552,46 @@ class ZhihuPaser(ParserProc):
                 likesCount = int(comment['likesCount'])
                 c = ZhihuComment(id, replyid, name, content, likesCount, answer_code)
                 #gl.g_data_queue.put(c)
-                kwargs['data_queue'].put(c)
+                proc_queue['data_queue'].put(c)
             except Exception,e:
                 _g_html_logger.error("%s when parser %s"%(e, answer_code))            
         return comment_counts
 
 
-    def dispatch(self, ele, kwargs):
+    def dispatch(self, ele, proc_queue):
         """fecth data from html queue and put data to database queue, put url to url queue"""
         if ZhihuRules._qst_url.search(ele[2]):
-            ret = self.parse_qstn(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
+            ret = self.parse_qstn(ele[0], ele[1], ele[2], ele[3], ele[4], proc_queue)
         elif ZhihuRules._cmt_url.search(ele[2]):
-            ret = self.parse_cmnt(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
+            ret = self.parse_cmnt(ele[0], ele[1], ele[2], ele[3], ele[4], proc_queue)
         elif ZhihuRules._bing_url.search(ele[2]):
-            ret = self.parse_bing(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
+            ret = self.parse_bing(ele[0], ele[1], ele[2], ele[3], ele[4], proc_queue)
         elif ZhihuRules._usr_url.search(ele[2]) :
-            ret = self.parse_usr(ele[0], ele[1], ele[2], ele[3], ele[4], kwargs)
+            ret = self.parse_usr(ele[0], ele[1], ele[2], ele[3], ele[4], proc_queue)
         if ret is not None:
-            kwargs['url_queue'].put(ret)
+            proc_queue['url_queue'].put(ret)
 
 
-    def work(self, kwargs):
+    def work(self, proc_queue):
         """
-        @params: kwargs['html_queue'] = gl.g_html_queue
-                 kwargs['url_queue'] = gl.g_url_queue
-                 kwargs['data_queue'] = gl.g_data_queue
-                 kwargs['static_rc'] = gl.g_static_rc
+        @params: proc_queue, dict. queues between two different process to share memeories. 
+                 Its format is {'html_queue': gl.g_html_queue,
+                 'url_queue': gl.g_url_queue,
+                 'data_queue': gl.g_data_queue,
+                 'static_rc': gl.g_static_rc} 
         """
         print 'sub: ', gl.g_zhihu_database
         print 'sub: ', gl.g_http_client.login_success
         print 'sub: ', gl.g_mysql_params
-        html_queue = kwargs['html_queue']
-        url_queue = kwargs['url_queue']
+        html_queue = proc_queue['html_queue']
+        url_queue = proc_queue['url_queue']
         while True:
             if url_queue.empty() and html_queue.empty() or self.exit:
                 print 'task completed! process %s exit'%self.name
                 os._exit(0) 
             ele = html_queue.get()
             print ele[2]
-            self.dispatch(ele, kwargs)          
+            self.dispatch(ele, proc_queue)          
         os._exit(0) 
 
 
