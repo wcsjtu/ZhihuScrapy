@@ -31,7 +31,7 @@ if __name__ == '__main__':
     
 
 
-    u0 = ['GET', 'https://cn.bing.com/search', {'q':'site:zhihu.com/question *', 'first':1}, None]
+    u0 = ['GET', 'https://cn.bing.com/search', {'q':u'site:zhihu.com/question *', 'first':1}, None]
     u1 = ['GET', 'https://www.zhihu.com/question/39677202', None, None]
     u2 = ['GET', 'https://www.zhihu.com/r/answers/31504680/comments', None, None]
     u3 = ['GET', 'https://www.zhihu.com/people/wang-su-yang-43/about', None, None]
@@ -52,6 +52,7 @@ if __name__ == '__main__':
         print 'html queue: ', gl.g_html_queue.qsize()
         print 'data queue: ', gl.g_data_queue.qsize()
         print 'image queue:', gl.g_static_rc.qsize()
+        print 'subproc: ', parser.is_alive()
         print '========================================='
         print ''
         print ''

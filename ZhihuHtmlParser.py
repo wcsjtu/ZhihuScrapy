@@ -223,15 +223,16 @@ class ZhihuRules(Rules):
                     return None
                 if not payloads is None:
                     offset = json.loads(payloads['params'])['offset']
+                    url_token = re.findall('\d{8}', payloads['params'])[0]
                     payloads['params'] = payloads['params'].replace('%d}'%offset, '%d}'%(offset+10))
-                    ret = ['POST', url, payloads, None]
+                    ret = ['POST', url, payloads, headers]
                     pass
                 else:
                     url_token = re.findall(r'\d{8}', url)[0]
                     _xsrf = gl.g_http_client.account['_xsrf']
-                    url += '/node/QuestionAnswerListV2'     
-                    payloads = {'method': 'next', 'params':'{"url_token":%s,"pagesize":10,"offset":20}'%url_token, '_xsrf':'%s'%_xsrf}
-                    ret = ['POST', url, payloads, None]
+                    url_ = ''.join([gl.g_zhihu_host, '/node/QuestionAnswerListV2'])
+                    payloads = {'method':'next', 'params':'{"url_token":%s,"pagesize":10,"offset":20}'%url_token, '_xsrf':'%s'%_xsrf}
+                    ret = ['POST', url_, payloads, {'Referer': 'https://www.zhihu.com/question/%s'%url_token,"Host": "www.zhihu.com", 'Cookie': _xsrf}]
 
             elif cls._cmt_url.search(url):
                 if stop_flag < cls.MAX_COMMENT_PER_PAGE: 
@@ -252,6 +253,7 @@ class ZhihuRules(Rules):
                 ret = ["GET", url, payloads, None]
             return ret
         except Exception, e:
+            print e 
             _g_html_logger.warning('ajax rule error, url is %s, payloads is %s'%(url, str(payloads).decode('unicode-escape')))
         return None
 
@@ -373,6 +375,7 @@ class ZhihuPaser(ParserProc):
                         if not url.startswith('http'): continue
                     except KeyError:
                         url = img.attrib['src']
+                        #if not url.startswith('http'): continue
                     img_urls.append(url)
                 # img_urls = [img.attrib['data-original'] for img in img_nodes ]
 
@@ -560,6 +563,7 @@ class ZhihuPaser(ParserProc):
 
     def dispatch(self, ele, proc_queue):
         """fecth data from html queue and put data to database queue, put url to url queue"""
+        ret = None
         if ZhihuRules._qst_url.search(ele[2]):
             ret = self.parse_qstn(ele[0], ele[1], ele[2], ele[3], ele[4], proc_queue)
         elif ZhihuRules._cmt_url.search(ele[2]):
@@ -585,13 +589,16 @@ class ZhihuPaser(ParserProc):
         print 'sub: ', gl.g_mysql_params
         html_queue = proc_queue['html_queue']
         url_queue = proc_queue['url_queue']
-        while True:
-            if url_queue.empty() and html_queue.empty() or self.exit:
-                print 'task completed! process %s exit'%self.name
-                os._exit(0) 
-            ele = html_queue.get()
-            print ele[2]
-            self.dispatch(ele, proc_queue)          
+        try:
+            while True:
+                if url_queue.empty() and html_queue.empty() and self.exit:
+                    print 'task completed! process %s exit'%self.name
+                    os._exit(0) 
+                ele = html_queue.get()
+                print ele[2]
+                self.dispatch(ele, proc_queue) 
+        except Exception, e :
+            _g_html_logger.error(e)         
         os._exit(0) 
 
 

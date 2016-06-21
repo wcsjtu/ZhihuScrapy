@@ -32,7 +32,7 @@ _USER_INTERVAL = 0
 
 class HttpClient(object):
     """"""
-    _MAX_LOGIN_LIMIT = 5
+    _MAX_LOGIN_LIMIT = 1
 
     def __init__(self):
        
@@ -40,18 +40,19 @@ class HttpClient(object):
         self._url = gl.g_zhihu_host
         self.account = gl.g_zhihu_account
         self._verify_code = ""
-        self.default_headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; WOW64; rv:46.0) Gecko/20100101 Firefox/46.0",
+        self.default_headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; WOW64; rv:47.0) Gecko/20100101 Firefox/47.0",
                                 "connection":"keep-alive"}
         self._is_init = False
         self.login_success = False
         self.logger = ZhihuLog.creatlogger(self.__class__.__name__)
         self.session = requests.Session()
+        self.session.headers = self.default_headers
         self.session.cookies = cookielib.LWPCookieJar(gl.g_config_folder + 'cookiejar')
         #if os.path.exists(gl.g_config_folder+'cookiejar'):
         #    self.session.cookies.load(ignore_discard=True)
             #self.login_success = True        
         if not self.login_success :
-            #self.login()
+            self.login()
             pass
 
     def get_host(self):
@@ -71,21 +72,24 @@ class HttpClient(object):
         """
         try:
             header = self.default_headers if headers_ is None else headers_
-            rqst = self.session.request(method=method_, url=url_, params=payloads_, headers=header, timeout=10) 
+            payloads = urllib.urlencode(payloads_) if payloads_ is not None else None
+            if payloads is not None:
+                pass
+            rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=10) 
             if 'Set-Cookie' in rqst.headers or 'Set-Cookie2' in rqst.headers:
                 self.session.cookies.save(ignore_discard=True)
             if rqst.status_code != 200:
-                rqst = self.session.request(method=method_, url=url_, params=payloads_, headers=header, timeout=10)
+                rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=10)
                 if rqst.status_code != 200:
                     gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
                     return None
             return [[rqst.content], method_, url_, payloads_, headers_]
 
         except (requests.HTTPError, requests.Timeout, requests.ConnectionError, requests.TooManyRedirects), e: 
-            tips = '%s when visit %s '%(e, url) if payloads_ is None else '%s when \
-                    visit %s with data %s'%(e, url, str(payloads_).decode('unicode_escape'))
+            tips = '%s when visit %s '%(e, url_) if payloads_ is None else '%s when \
+                    visit %s with data %s'%(e, url_, str(payloads_).decode('unicode_escape'))
             self.logger.error(tips)
-            gl.g_fail_url.warning('%s %s'%(url, str(payloads_)))
+            gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
             return None
                  
     def get_html(self, method_, url_, payloads_, headers_):
@@ -138,14 +142,14 @@ class HttpClient(object):
         self.account['remember_me'] = "true" 
         uri = "/login/email" if 'email' in self.account else "/login/phone_num"
         login_url = self._url+uri
-        rqst = self.session.request('GET', self._url)     
+        rqst = self.session.request('GET', self._url, headers=self.default_headers)     
         login_counter = 0
         while login_counter <= self._MAX_LOGIN_LIMIT:       
             login_counter += 1  
             try:
                 if 'Set-Cookie' in rqst.headers and '_xsrf' not in self.account:
                     self.account['_xsrf'] = re.findall("_xsrf=(.+?);", rqst.headers['Set-Cookie'])[0]  
-                rqst2 = self.session.request('POST', login_url, params=self.account)
+                rqst2 = self.session.request('POST', login_url, params=self.account, headers=self.default_headers)
                 if rqst2.status_code == ErrorCode.HTTP_OK:
                     ret_value = json.loads(rqst2.content)['r']
                     if ret_value == 0:
@@ -194,7 +198,7 @@ class HtmlClient(threading.Thread):
     def run(self):
         """loop"""
         while True:
-            if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+            if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) and self.exit:
                 self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
                 print 'task completed! thread %s exit'%self.name
                 break
@@ -230,7 +234,7 @@ class StaticClient(threading.Thread):
     def run(self):
         """loop"""
         while True:
-            if (gl.g_url_queue.empty() and gl.g_html_queue.empty() and gl.g_static_rc.empty()) or self.exit:
+            if (gl.g_url_queue.empty() and gl.g_html_queue.empty() and gl.g_static_rc.empty()) and self.exit:
                 self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
                 print 'task completed! thread %s exit'%self.name
                 break

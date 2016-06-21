@@ -180,7 +180,7 @@ class ZhihuDataBase(threading.Thread):
             ret = self.cur.execute(cmd, data)
             #self.database.commit()            
         except Error, e :
-            _g_database_logger.warning("insert data error, reason: %s"%e.message)
+            _g_database_logger.warning("insert data error, reason: %s"%e)
         finally:
             #self._lock.release()
             pass
