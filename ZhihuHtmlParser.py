@@ -375,10 +375,10 @@ class ZhihuPaser(ParserProc):
                         if not url.startswith('http'): continue
                     except KeyError:
                         url = img.attrib['src']
-                        #if not url.startswith('http'): continue
+                        if not url.startswith('http'): continue
                     img_urls.append(url)
                 # img_urls = [img.attrib['data-original'] for img in img_nodes ]
-
+                
                 hasimg = False if img_urls == [] else True
 
                 # abstract user link and name, then tag the anonymous attribute
@@ -405,9 +405,10 @@ class ZhihuPaser(ParserProc):
                 if not isexisted:
                     #gl.g_data_queue.put(answer)
                     proc_queue['data_queue'].put(answer)
-                if vote != '0' and hasimg and not isexisted:
-                    rc = [img_urls, None, os.path.join(gl.g_storage_path , user_url)]
-                    gl.g_static_rc.put(rc)
+                if  hasimg:
+                    rc = [img_urls, None, gl.g_storage_path + user_url]
+                    proc_queue['static_rc'].put(rc)
+                    
 
                 if not is_anonymous and not isexisted:
                     if not gl.g_zhihu_database.is_existed(self._vuser):
@@ -584,9 +585,6 @@ class ZhihuPaser(ParserProc):
                  'data_queue': gl.g_data_queue,
                  'static_rc': gl.g_static_rc} 
         """
-        print 'sub: ', gl.g_zhihu_database
-        print 'sub: ', gl.g_http_client.login_success
-        print 'sub: ', gl.g_mysql_params
         html_queue = proc_queue['html_queue']
         url_queue = proc_queue['url_queue']
         try:
@@ -595,7 +593,6 @@ class ZhihuPaser(ParserProc):
                     print 'task completed! process %s exit'%self.name
                     os._exit(0) 
                 ele = html_queue.get()
-                print ele[2]
                 self.dispatch(ele, proc_queue) 
         except Exception, e :
             _g_html_logger.error(e)         
