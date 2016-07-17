@@ -51,7 +51,7 @@ class HttpClient(object):
         self.session.cookies = cookielib.LWPCookieJar(gl.g_config_folder + 'cookiejar')
         if os.path.exists(gl.g_config_folder+'cookiejar'):
            self.session.cookies.load(ignore_discard=True)
-            self.login_success = True    
+           self.login_success = True    
 
     @property
     def host(self):
