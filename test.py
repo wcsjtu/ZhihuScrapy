@@ -30,8 +30,8 @@ class MyHttpClient(Client.HttpClient):
         super(MyHttpClient, self).__init__()
         self.url = host
         self.input_account()
-        if not self.login_success:
-            self.login()
+        #if not self.login_success:
+        #    self.login()
 
     def _get_veri_code(self):
         """to get captcha"""
@@ -235,21 +235,16 @@ class ZhihuRules(Rules.Rules):
         return super(ZhihuRules, self).__init__(*args, **kwargs)
 
     @classmethod
-    def ajax_rules(cls, sextp, stop_flag):
+    def ajax_rules(cls, sextp, rulefactor):
         """
         this function is used to generate parameters of next http request by ajax
-        @params: method, http method
-                 url, used to identify different ajax request
-                 payloads, sheetlist of http request
-                 headers, http header
-                 stop_flag, self-define type, used to stop the ajax of this url
-                 kwargs, just for extension 
-        @return  this function must return [method, url, payloads, headers] or None
-                                                            {}
+        @params: sextp, instance of class HttpSextp. See .Http/SexTuple.py for detail 
+                 rulefactor, instance of RuleFactor
+        @return  this function must return sextp or None                                                            
         """
         try:
             if cls._qst_url.search(sextp.url):
-                if stop_flag < cls.MAX_ANSWERS_PER_PAGE: 
+                if rulefactor.count < cls.MAX_ANSWERS_PER_PAGE: 
                     log.warning('Achieve to the end of question %s'%sextp.url)
                     return None
                 if not sextp.payloads is None:
@@ -267,7 +262,7 @@ class ZhihuRules(Rules.Rules):
                     sextp.request_headers = {'Referer': 'https://www.zhihu.com/question/%s'%url_token,"Host": "www.zhihu.com", 'Cookie': _xsrf}
 
             elif cls._cmt_url.search(sextp.url):
-                if stop_flag < cls.MAX_COMMENT_PER_PAGE: 
+                if rulefactor.count < cls.MAX_COMMENT_PER_PAGE: 
                     log.warning('Achieve to the end of comments in answser %s'%sextp.url)
                     return None
                 if not sextp.payloads is None:
@@ -278,7 +273,7 @@ class ZhihuRules(Rules.Rules):
                     #ret = ["GET", sextp.url, sextp.payloads, sextp.request_headers]
 
             elif cls._bing_url.search(sextp.url):
-                if stop_flag < cls.QUESTION_PER_PAGE_BING: 
+                if rulefactor.count < cls.QUESTION_PER_PAGE_BING: 
                     log.warning('Achieve to the end of bing cache')
                     return None
                 sextp.payloads['first'] += cls.QUESTION_PER_PAGE_BING
@@ -292,8 +287,8 @@ class ZhihuRules(Rules.Rules):
         return None
 
     @classmethod
-    def filt_rules(cls, urls, *args, **kwargs):
-        pass
+    def filt_rules(cls, sextp, rulefactor):
+        return None
 
 
 class ZhihuPaser(Parser.ParserProc):
@@ -308,7 +303,7 @@ class ZhihuPaser(Parser.ParserProc):
             self.start()
         
     
-    @ZhihuRules.ajax
+    @ZhihuRules.filter
     def parse_bing(self, sextp, proc_queue):
         """
         parse question url and title from html returned by Bing
@@ -341,8 +336,9 @@ class ZhihuPaser(Parser.ParserProc):
             except Exception,e :
                 log.error('%s when parse bing html'%e)
         return Rules.RuleFactor(question_count, None)
+    
             
-    @ZhihuRules.ajax    
+    @ZhihuRules.filter    
     def parse_qstn(self, sextp, proc_queue):
         """
         parse question url and title from html returned by Bing
@@ -466,8 +462,7 @@ class ZhihuPaser(Parser.ParserProc):
                 log.warning('%s when parser %s'%(e, quest_url))
 
         return Rules.RuleFactor(answer_counts, None)
-    
-        
+            
     def parse_usr(self, sextp, proc_queue):
         """
         parse question url and title from html returned by Bing
@@ -559,7 +554,7 @@ class ZhihuPaser(Parser.ParserProc):
             gl.g_fail_url.warning(url)
         return None
         
-    @ZhihuRules.ajax
+    @ZhihuRules.filter
     def parse_cmnt(self, sextp, proc_queue):
         """
         parse question url and title from html returned by Bing
@@ -606,48 +601,10 @@ class ZhihuPaser(Parser.ParserProc):
                 log.error("%s when parser %s"%(e, answer_code))            
         return Rules.RuleFactor(comment_counts, None)
 
-
-    def dispatch(self, sextp, proc_queue):
-        """fecth data from html queue and put data to database queue, put url to url queue"""
-        ret = None
-        if ZhihuRules._qst_url.search(sextp.url):
-            ret = self.parse_qstn(sextp, proc_queue)
-        elif ZhihuRules._cmt_url.search(sextp.url):
-            ret = self.parse_cmnt(sextp, proc_queue)
-        elif ZhihuRules._bing_url.search(sextp.url):
-            ret = self.parse_bing(sextp, proc_queue)
-        elif ZhihuRules._usr_url.search(sextp.url) :
-            ret = self.parse_usr(sextp, proc_queue)
-        if ret is not None:
-            proc_queue['url_queue'].put(ret)
-
-
-    def work(self, proc_queue):
-        """
-        @params: proc_queue, dict. queues between two different process to share memeories. 
-                 Its format is {'html_queue': gl.g_html_queue,
-                 'url_queue': gl.g_url_queue,
-                 'data_queue': gl.g_data_queue,
-                 'static_rc': gl.g_static_rc} 
-        """
-        html_queue = proc_queue['html_queue']
-        url_queue = proc_queue['url_queue']
-        try:
-            while True:
-                if url_queue.empty() and html_queue.empty() and self.exit:
-                    print 'task completed! process %s exit'%self.name
-                    os._exit(0) 
-                ele = html_queue.get()
-                self.dispatch(ele, proc_queue) 
-        except Exception, e :
-            log.error(e)         
-        os._exit(0) 
-
-
-    def quit(self):
-        """force process to exit"""
-        self.exit = True
-
+ZhihuPaser.add_map(ZhihuPaser.parse_bing, re.compile(r'cn.bing.com'))
+ZhihuPaser.add_map(ZhihuPaser.parse_cmnt, re.compile(r'/r/answers/\d+?/comments'))
+ZhihuPaser.add_map(ZhihuPaser.parse_qstn, re.compile(r'/question/\d{8}'))
+ZhihuPaser.add_map(ZhihuPaser.parse_usr, re.compile(r'about'))
 
 #
 #
