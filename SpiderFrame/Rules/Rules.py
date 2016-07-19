@@ -96,9 +96,9 @@ class Rules(object):
             url = url.split("#")[0]
         if payloads is not None:
             url = ''.join([url, '?', urllib.urlencode(payloads)])
-        if url in cls._bloom:
+        if url.replace("https://", "http://") in cls._bloom:
             return True
-        cls._bloom.add(url)
+        cls._bloom.add(url.replace("https://", "http://"))
         return False
     
 
