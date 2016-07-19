@@ -27,19 +27,23 @@ url is 'https://'
     
  
 """
+import urllib
 import sys
 reload(sys)
 sys.setdefaultencoding('utf-8')
 sys.path.append("..")
 #import Global as gl
 from SpiderFrame import Global as gl
-
+from ..Http.SexTuple import HttpSextp
+from .pybloom import BloomFilter, ScalableBloomFilter
+from .utils import range_fn
 from functools import wraps
 
 
 
 class Rules(object):
     """base class for specified rules"""
+    _bloom = ScalableBloomFilter(mode=ScalableBloomFilter.SMALL_SET_GROWTH)
 
     @classmethod
     def ajax_rules(cls, sextp, rulefactor):
@@ -49,47 +53,61 @@ class Rules(object):
                  rulefactor, instance of class RuleFactor. 
         @return  this function must return None or instance of class HttpSextp, whose reponse and response_headers are None
         """
-        raise NotImplementedError('method `ajax_rules` must be override in child class')
+        raise NotImplementedError('method `ajax_rules` must be override in subclass')
         
     @classmethod
-    def filt_rules(cls, urls, *args, **kwargs):
+    def filt_rules(cls, sextp, rulefactor):
         """
         this function is used to filt the urls in html by cerntain rules
-        @params:
-                urls, list of url
-                args and kwargs are used for extension
-        @return this function must return [[url, payloads, headers], [url, payloads, headers], ....]
+        @params: sextp, instance of class HttpSextp. See .Http/SexTuple.py for detail 
+                 rulefactor, instance of class RuleFactor.
+        @return this function must return [url1, url2....] or None
         """
-        raise NotImplementedError('method `filt_rules` must be override in child class')
-
-    @classmethod
-    def ajax(cls, func):
-        """"""
-        @wraps(func)
-        def wrapper(obj, sextp, queue_dict):
-            ret = func(obj, sextp, queue_dict)
-            assert isinstance(ret, RuleFactor)
-            next = cls.ajax_rules(sextp, ret)
-            return next
-        return wrapper
+        raise NotImplementedError('method `filt_rules` must be override in subclass')
 
     @classmethod
     def filter(cls, func):
         """"""
         @wraps(func)
-        def wrapper(obj, html, urls, payloads, headers, *args, **kwargs):
-            ret = func(obj, html, urls, payloads, headers)
-            assert isinstance(ret, list)
-            ret = cls.filt_rules(urls, *args, **kwargs)
+        def wrapper(obj, sextp, queue_dict):
+            temp = []
+            ret = func(obj, sextp, queue_dict)
+            assert isinstance(ret, RuleFactor)
+            #handle ajax
+            next = cls.ajax_rules(sextp, ret)
+            if next is not None:
+                if not cls.in_bloom(next.url, next.payloads):
+                    temp.append(ajax_ret)
+
+            #handle urls in htmls
+            url_list = cls.filt_rules(sextp, ret)
+            if url_list is not None:
+                for url in url_list:
+                    if not cls.in_bloom(url, None):
+                        temp.append(HttpSextp(url, "GET", None, None,None,None))           
+            ret = None if temp == [] else temp         
             return ret
         return wrapper
+
+    @classmethod
+    def in_bloom(cls, url, payloads):
+        """check whether url with payloads is in self._bloom or not"""
+        if "#" in url:
+            url = url.split("#")[0]
+        if payloads is not None:
+            url = ''.join([url, '?', urllib.urlencode(payloads)])
+        if url in cls._bloom:
+            return True
+        cls._bloom.add(url)
+        return False
+    
 
 
 class RuleFactor(object):
     """
     store the two aspects of rules
     """
-    def __init__(self, count=None, urls=None):
+    def __init__(self, count=-1, urls=None):
         """
         @params: count, integer.
                  urls, list.

@@ -3,3 +3,4 @@
 __version__ = "20160704"
 __author__ = "wcsjtu@163.com"
 
+from .pybloom import BloomFilter, ScalableBloomFilter
