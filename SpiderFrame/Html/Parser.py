@@ -18,7 +18,7 @@ from ..Rules.Rules import RuleFactor
 class BasicParser(HTMLParser.HTMLParser):
     def __init__(self):
         self._urls = []
-        return super(BasicParser, self).__init__()    
+        HTMLParser.HTMLParser.__init__(self)    
 
     def handle_starttag(self, tag, attrs):
         if tag == 'a':

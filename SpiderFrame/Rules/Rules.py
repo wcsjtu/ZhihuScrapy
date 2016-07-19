@@ -77,7 +77,7 @@ class Rules(object):
             next = cls.ajax_rules(sextp, ret)
             if next is not None:
                 if not cls.in_bloom(next.url, next.payloads):
-                    temp.append(ajax_ret)
+                    temp.append(next)
 
             #handle urls in htmls
             url_list = cls.filt_rules(sextp, ret)
