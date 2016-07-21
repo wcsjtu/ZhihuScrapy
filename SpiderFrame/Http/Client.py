@@ -42,7 +42,8 @@ class HttpClient(object):
         self.url = None
         self.account = None
         self.default_headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; WOW64; rv:47.0) Gecko/20100101 Firefox/47.0",
-                                "connection":"keep-alive"}
+                                "connection":"keep-alive",
+                                "Accept-Encoding": "gzip"}
         self._is_init = False
         self.login_success = False
         self.logger = ZhihuLog.creatlogger(self.__class__.__name__)
@@ -154,7 +155,8 @@ class HtmlClient(threading.Thread):
     def run(self):
         """loop"""
         while True:
-            if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+            #if (gl.g_url_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+            if self.exit:
                 self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
                 print 'task completed! thread %s exit'%self.name
                 break

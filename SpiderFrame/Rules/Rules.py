@@ -73,8 +73,11 @@ class Rules(object):
             temp = []
             ret = func(obj, sextp, queue_dict)
             assert isinstance(ret, RuleFactor)
+            #print "ret in filter is: ", ret.count, "  ", ret.urls
+            #print "sextp in filter is ", sextp.url, " ", sextp.payloads
             #handle ajax
             next = cls.ajax_rules(sextp, ret)
+            #print "next in filter", next
             if next is not None:
                 if not cls.in_bloom(next.url, next.payloads):
                     temp.append(next)

@@ -13,7 +13,11 @@ sys.path.append("..")
 #import Global as gl
 from SpiderFrame import Global as gl
 from ..Http.SexTuple import HttpSextp, HttpSrsc
+from ..Logger import ZhihuLog
 from ..Rules.Rules import RuleFactor
+
+_g_html_logger = ZhihuLog.creatlogger(__name__)
+
 
 class BasicParser(HTMLParser.HTMLParser):
     def __init__(self):
@@ -64,7 +68,7 @@ class ParserProc(multiprocessing.Process):
         url_queue = proc_queue['url_queue']
         try:
             while True:
-                if url_queue.empty() and html_queue.empty() or self.exit:
+                if self.exit:
                     print 'task completed! process %s exit'%self.name
                     os._exit(0) 
                 sextp = html_queue.get()

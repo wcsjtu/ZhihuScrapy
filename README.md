@@ -19,6 +19,7 @@ SpiderFrame是由纯python编写的，在其中使用了许多优秀的开源库
 from SpiderFrame.Html import Parser, StructData
 from SpiderFrame.Rules import Rules
 from SpiderFrame.Local import Config, DataBase
+from SpiderFrame.Http import Client, SexTuple
 from SpiderFrame import Global as gl
 import re
 import urllib
@@ -31,7 +32,7 @@ class GithubRepo(StructData):
                         ("Forks", "int"),
                         ("Language", "varchar(32)", "NULL")
                         ]
-    def __init__(self, RepoName, Stars, Forks, Language=NULL):
+    def __init__(self, RepoName, Stars, Forks, Language=None):
         # 确保参数的顺序、数目与_database_struct中的一致
         self.RepoName = RepoName
         self.Stars = Stars
@@ -99,7 +100,7 @@ class GithubParser(Parser.ParserProc):
             repo_name = re.findall(r'''repo-list-name[\s\S]+?href="/(.*)">''', repo)[0]
 
             # 生成结构化数据对象
-            data = GithubRepo(repo_name, starts, forks, lang)
+            data = GithubRepo(repo_name, stars, forks, lang)
 
             # 将数据放入data_queue，数据库线程会从这个队列里取数据并存入数据库
             proc_queue['data_queue'].put(data)
@@ -147,10 +148,17 @@ class GithubRules(Rules.Rules):
                     # 如果html中的repo数目小于10，则说明翻页到底了，直接返回None
                     return None
                 # 在请求头部中加入referer，以告知对方服务器请求是从当前页面发出的(欺骗服务器啊),这步非必要
+
+                # 往请求头中添加元素时，记住要先判断request_headers是否为None
+                if sextp.request_headers is None:
+                	sextp.request_headers = {}
                 sextp.request_headers['referer'] = ''.join([sextp.url, 
                                                             '?', 
                                                             urllib.urlencode(sextp.payloads)
                                                             ])
+                # 往payloads里面添加字段时，也需要判断payloads是否是None
+                if sextp.payloads is None:
+                	sextp.payloads = {}
                 if not 'p' in sextp.payloads:                                        
                     # 如果请求payloads里面没有'p'字段，说明当前是第一页，则下一页的payloads加上'p'=2就行
                     sextp.payloads['p'] = 2                                                                               
@@ -221,6 +229,7 @@ gl.g_database = DataBase.DataBase()
 ```python
 def main():
     import time
+    DataBase.DataBase.set_intval(30) #设置数据库commit时间间隔。框架里的默认值是300秒
     # 向队列里添加元素
     github_python = SexTuple.HttpSextp("https://github.com/search", 
                                        "GET", 
@@ -242,7 +251,7 @@ def main():
     gl.g_url_queue.put(github_java)
 
     # 创建HtmlClient实例
-    htmlclient = Client.HtmlClient()
+    htmlclient = Client.HtmlClient('downloader')
 
     # 如果需要下载静态资源，可以创建StaticClient实例
     # static_rcclient = Client.StaticClient()
@@ -254,11 +263,10 @@ def main():
     
     #监视各个队列
     while True:
-        print 'url queue:  ', gl.g_url_queue.qsize()
-        print 'html queue: ', gl.g_html_queue.qsize()
-        print 'data queue: ', gl.g_data_queue.qsize()
+        print 'url queue:  ', gl.g_url_queue.qsize(), "downloader: ", htmlclient.isAlive()
+        print 'html queue: ', gl.g_html_queue.qsize(), "parser: ", parser.is_alive()
+        print 'data queue: ', gl.g_data_queue.qsize(), "database: ", gl.g_database.isAlive()
         print 'image queue:', gl.g_static_rc.qsize()
-        print 'subproc: ', parser.is_alive()
         print '=========================================\n\n'
         time.sleep(3)    
 ```

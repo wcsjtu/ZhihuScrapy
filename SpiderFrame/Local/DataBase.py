@@ -4,6 +4,7 @@ import time
 import sys
 import os
 import threading
+import Queue
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -67,6 +68,7 @@ class DataBase(threading.Thread):
     """
 
     _COMMIT_INTEVAL = 300
+    _TIME_OUT = 5
 
     def __init__(self):
         threading.Thread.__init__(self, name='database')        
@@ -116,10 +118,14 @@ class DataBase(threading.Thread):
                     self._commit_data()
                     self.timer = time.time()
                 else:
-                    instance = gl.g_data_queue.get()
-                    self.insert_data(instance)
+                    try:
+                        instance = gl.g_data_queue.get(timeout=self._TIME_OUT)
+                        self.insert_data(instance)
+                    except Queue.Empty:
+                        pass
             
-                if (gl.g_url_queue.empty() and gl.g_data_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+                #if (gl.g_url_queue.empty() and gl.g_data_queue.empty() and gl.g_html_queue.empty()) or self.exit:
+                if self.exit:
                     _g_database_logger.warning("Task Compeleted, database thread exit")
                     break
             except Exception, e :
