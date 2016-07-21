@@ -138,6 +138,7 @@ class HtmlClient(threading.Thread):
     """charged to handle html request and put them into queue"""
 
     __GET_TIMEOUT = 10
+    intval = 0
 
     def __init__(self, name_):
         
@@ -167,14 +168,24 @@ class HtmlClient(threading.Thread):
                     self.work_func(ele.method, ele.url, ele.payloads, ele.request_headers)
                 except Queue.Empty, e :
                     self.httpclient.logger.warning('timeout when get url from url queue')
-
-
+                finally:
+                    time.sleep(self.intval)
+    
+    @classmethod
+    def set_intval(cls, intval):
+        """
+        set inteval between two http request
+        @params: intval, unit is second
+        """
+        assert intval >=0, "inteval must be positive value"
+        cls.intval = intval
 
 
 class StaticClient(threading.Thread):
     """charged to handle static resource and store them in file system"""
 
     __GET_TIMEOUT = 10
+    intval = 0
 
     def __init__(self, name_):
         """"""
@@ -205,3 +216,14 @@ class StaticClient(threading.Thread):
                     self.work_func(ele.urls, ele.headers, ele.storepath)
                 except Queue.Empty, e :
                     self.httpclient.logger.warning('timeout when get url from url queue')
+                finally:
+                    time.sleep(self.intval)
+
+    @classmethod
+    def set_intval(cls, intval):
+        """
+        set inteval between two http request
+        @params: intval, unit is second
+        """
+        assert intval >=0, "inteval must be positive value"
+        cls.intval = intval
