@@ -253,6 +253,9 @@ def main():
     # 创建HtmlClient实例
     htmlclient = Client.HtmlClient('downloader')
 
+
+    Client.HtmlClient.set_intval(5)
+    
     # 如果需要下载静态资源，可以创建StaticClient实例
     # static_rcclient = Client.StaticClient()
 
