@@ -45,6 +45,7 @@ class HttpClient(object):
                                 "connection":"keep-alive",
                                 "Accept-Encoding": "gzip"}
         self._is_init = False
+        self.load_cookies_success = False
         self.login_success = False
         self.logger = ZhihuLog.creatlogger(self.__class__.__name__)
         self.session = requests.Session()
@@ -52,7 +53,7 @@ class HttpClient(object):
         self.session.cookies = cookielib.LWPCookieJar(gl.g_config_folder + 'cookiejar')
         if os.path.exists(gl.g_config_folder+'cookiejar'):
            self.session.cookies.load(ignore_discard=True)
-           self.login_success = True    
+           self.load_cookies_success = True    
 
     @property
     def host(self):

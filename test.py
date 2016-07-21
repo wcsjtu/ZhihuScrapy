@@ -2,6 +2,7 @@
 
 import re
 import os
+import json
 from lxml import etree
 from SpiderFrame import Global as gl
 from SpiderFrame import ErrorCode
@@ -29,9 +30,10 @@ class MyHttpClient(Client.HttpClient):
     def __init__(self, host):
         super(MyHttpClient, self).__init__()
         self.url = host
-        self.input_account()
-        #if not self.login_success:
-        #    self.login()
+        self.account = {'phone_num': '1**', 'password': '**', 'remember_me':"true", '_xsrf': '**'}
+        if not self.login_success:            
+            self.input_account()
+            self.login()
 
     def _get_veri_code(self):
         """to get captcha"""
@@ -52,33 +54,32 @@ class MyHttpClient(Client.HttpClient):
         self.account['remember_me'] = "true" 
         uri = "/login/email" if 'email' in self.account else "/login/phone_num"
         login_url = self.url+uri
-        rqst = self.session.request('GET', self.url, headers=self.default_headers)     
+        #rqst = self.session.request('GET', self.url, headers=self.default_headers)    
+        rqst = self.url_request('GET', self.url, None, None)
+         
         login_counter = 0
         while login_counter <= self._MAX_LOGIN_LIMIT:       
             login_counter += 1  
             try:
-                if 'Set-Cookie' in rqst.headers and '_xsrf' not in self.account:
-                    self.account['_xsrf'] = re.findall("_xsrf=(.+?);", rqst.headers['Set-Cookie'])[0]  
-                rqst2 = self.session.request('POST', login_url, params=self.account, headers=self.default_headers)
-                if rqst2.status_code == ErrorCode.HTTP_OK:
-                    ret_value = json.loads(rqst2.content)['r']
-                    if ret_value == 0:
-                        self.logger.error('Succeed to login')
-                        self.login_success = True
-                        self._is_init = True    
-                        login_counter = self._MAX_LOGIN_LIMIT
-                        return True
-                    else:
-                        ret = self._get_veri_code()
-                        if not ret:continue
-                        os.system("captcha.gif")
-                        cap = raw_input('please input Captcha which showed in your screen\n')
-                        self.account['captcha'] = cap
-                        continue                        
+                if 'Set-Cookie' in rqst.response_headers and '_xsrf' not in self.account:
+                    self.account['_xsrf'] = re.findall("_xsrf=(.*?);", rqst.response_headers['Set-Cookie'])[0]  
+                #rqst2 = self.session.request('POST', login_url, params=self.account, headers=self.default_headers)
+                rqst2 = self.url_request("POST", login_url, self.account, None)
+                ret_value = json.loads(rqst2.response[0])['r']
+                if ret_value == 0:
+                    self.logger.error('Succeed to login')
+                    self.login_success = True
+                    self._is_init = True    
+                    login_counter = self._MAX_LOGIN_LIMIT
+                    return True
                 else:
-                    self.logger.info("Fail to login")
-                    continue
-            except IndexError, e:
+                    ret = self._get_veri_code()
+                    if not ret:continue
+                    os.system("captcha.gif")
+                    cap = raw_input('please input Captcha which showed in your screen\n')
+                    self.account['captcha'] = cap
+                    continue                        
+            except (IndexError, KeyError), e:
                 self.logger.error('Fail to login, reason is %s'%e)
                 
         self.login_success = False
@@ -254,6 +255,7 @@ class ZhihuRules(Rules.Rules):
                     #ret = ['POST', sextp.url, sextp.payloads, sextp.request_headers]
                     pass
                 else:
+                    print "account in Rules: ", gl.g_http_client.account
                     url_token = re.findall(r'\d{8}', sextp.url)[0]
                     _xsrf = gl.g_http_client.account['_xsrf']
                     url_ = ''.join([gl.g_http_client.url, '/node/QuestionAnswerListV2'])
@@ -283,7 +285,7 @@ class ZhihuRules(Rules.Rules):
             return sextp
         except Exception, e:
             print e 
-            log.warning('ajax rule error, url is %s, payloads is %s'%(sextp.url, str(payloads).decode('unicode-escape')))
+            log.warning('ajax rule error, url is %s, payloads is %s'%(sextp.url, str(sextp.payloads).decode('unicode-escape')))
         return None
 
     @classmethod
@@ -583,8 +585,8 @@ class ZhihuPaser(Parser.ParserProc):
             comment_counts = len(comment_list)
             answer_code = int(re.findall(r'answers/(\d+?)/comments', url)[0])   # format is 20990037
         except Exception, e:
-            log.error('%s when parse comment %s'%(e, answer_code))
-            print '%s when parse comment %s'%(e, answer_code)
+            log.error('%s when parse comment %s'%(e, sextp.url))
+            print '%s when parse comment %s'%(e, sextp.url)
             gl.g_fail_url.warning(url)
             return RuleFactor(ErrorCode.COMMENT_FAIL, None)
         for comment in comment_list:
@@ -636,10 +638,36 @@ def test_parser():
 gl.g_http_client = MyHttpClient(zhihu_host)
 gl.g_database = DataBase.DataBase()
 
+def main():
+    import time
+    bing_start = SexTuple.HttpSextp('https://cn.bing.com/search', "GET", None, {'q':u'site:zhihu.com/question', 'first':1}, None, None)
+    qst_start = SexTuple.HttpSextp('https://www.zhihu.com/question/39677202', "GET", None, None, None, None)
+    cmt_start = SexTuple.HttpSextp('https://www.zhihu.com/r/answers/31504680/comments', "GET", None, None, None, None)
+    usr_start = SexTuple.HttpSextp('https://www.zhihu.com/people/wang-su-yang-43/about', "GET", None, None, None, None)
+
+    gl.g_url_queue.put(bing_start)
+    gl.g_url_queue.put(qst_start)
+    gl.g_url_queue.put(cmt_start)
+    gl.g_url_queue.put(usr_start)
+
+    htmlclient = Client.HtmlClient('downloader')
+    static_rcclient = Client.StaticClient('image')
+
+    parser = ZhihuPaser()
+    while True:
+        print 'url queue:  ', gl.g_url_queue.qsize(), "downloader: ", htmlclient.isAlive()
+        print 'html queue: ', gl.g_html_queue.qsize(), "parser: ", parser.is_alive()
+        print 'data queue: ', gl.g_data_queue.qsize(), "database: ", gl.g_database.isAlive()
+        print 'image queue:', gl.g_static_rc.qsize() , "image: ", static_rcclient.isAlive()
+        print '=========================================\n\n'
+        time.sleep(3)    
+
+
 
 if __name__ == "__main__":
 
 
-    test_parser()
+    main()
+
 
     print zhihu_host

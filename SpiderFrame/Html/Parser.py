@@ -72,6 +72,7 @@ class ParserProc(multiprocessing.Process):
                     print 'task completed! process %s exit'%self.name
                     os._exit(0) 
                 sextp = html_queue.get()
+                #print "url in Parser: ",sextp.url
                 self.dispatch(sextp, proc_queue) 
         except Exception, e :
             _g_html_logger.error(e)         
