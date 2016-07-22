@@ -383,7 +383,6 @@ class ZhihuPaser(Parser.ParserProc):
         
         if answer_counts == 0 and u'"msg": []' not in html[0]:
             log.error("no answer in question page, chech xpath of answer_nodes")
-            gl.g_fail_url.warning(url)
             return ErrorCode.LIST_EMPTY_ERROR
                     
         for node in answer_nodes:
@@ -553,7 +552,6 @@ class ZhihuPaser(Parser.ParserProc):
             proc_queue['data_queue'].put(user)
         except Exception, e:
             log.error("%s when parser %s"%(e, url))
-            gl.g_fail_url.warning(url)
         return None
         
     @ZhihuRules.filter
@@ -587,7 +585,6 @@ class ZhihuPaser(Parser.ParserProc):
         except Exception, e:
             log.error('%s when parse comment %s'%(e, sextp.url))
             print '%s when parse comment %s'%(e, sextp.url)
-            gl.g_fail_url.warning(url)
             return RuleFactor(ErrorCode.COMMENT_FAIL, None)
         for comment in comment_list:
             try:

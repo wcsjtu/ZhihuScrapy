@@ -36,6 +36,7 @@ this file defines basic httpclient
 class HttpClient(object):
     """"""
     _MAX_LOGIN_LIMIT = 1
+    TIMEOUT = 10
 
     def __init__(self):
        
@@ -76,21 +77,24 @@ class HttpClient(object):
             payloads = urllib.urlencode(payloads_) if payloads_ is not None else None
             if payloads is not None:
                 pass
-            rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=10) 
+            rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=self.TIMEOUT) 
             if 'Set-Cookie' in rqst.headers or 'Set-Cookie2' in rqst.headers:
                 self.session.cookies.save(ignore_discard=True)
-            if rqst.status_code != 200:
-                rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=10)
-                if rqst.status_code != 200:
-                    gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
+            if rqst.status_code != ErrorCode.HTTP_OK:
+                rqst = self.session.request(method=method_, url=url_, params=payloads, headers=header, timeout=self.TIMEOUT)
+                if rqst.status_code != ErrorCode.HTTP_OK:
+                    if rqst.status_code != ErrorCode.HTTP_NOTFOUND:
+                        gl.g_fail_url.put( HttpSextp(url_, method_, headers_, payloads_, None, None) )
+
+                    print "%s: %s with payloads %s"%(rqst.status_code, url_, str(payloads_))
+                    self.logger.error( "%s: %s with payloads %s"%(rqst.status_code, url_, str(payloads_)) )
                     return None
             return HttpSextp(url_, method_, headers_, payloads_, [rqst.content], rqst.headers)
 
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError, requests.TooManyRedirects), e: 
-            tips = '%s when visit %s '%(e, url_) if payloads_ is None else '%s when \
-                    visit %s with data %s'%(e, url_, str(payloads_).decode('unicode_escape'))
-            self.logger.error(tips)
-            gl.g_fail_url.warning('%s %s'%(url_, str(payloads_)))
+        except (requests.HTTPError, requests.Timeout, requests.ConnectionError), e: 
+            print "%s: %s with payloads %s"%(e, url_, str(payloads_))
+            self.logger.error( "%s: %s with payloads %s"%(e, url_, str(payloads_)) )
+            gl.g_fail_url.put( HttpSextp(url_, method_, headers_, payloads_, None, None) )
             return None
                  
     def get_html(self, method_, url_, payloads_, headers_):
@@ -119,7 +123,7 @@ class HttpClient(object):
                 if ret is not None:
                     with open(rc_path, 'wb') as f:
                         f.write(ret.response[0])
-            except Exception, e :
+            except (IndexError, IOError), e :
                 gl.g_http_client.logger.error( "%s when downloading img %s" % (e, url_))
                 print "%s when downloading img %s" % (e, url_)
 
@@ -132,13 +136,21 @@ class HttpClient(object):
         """"""
         raise NotImplementedError("method must be override in child class")
 
+    @classmethod
+    def set_timeout(cls, timeout):
+        """
+        set timeout value when get web source
+        """
+        assert timeout>=0, "parameter `timeout` must be positive value!"
+        cls.TIMEOUT = timeout
+
 
 #gl.g_http_client = HttpClient()
 
 class HtmlClient(threading.Thread):
     """charged to handle html request and put them into queue"""
 
-    __GET_TIMEOUT = 10
+    GET_TIMEOUT = 10
     intval = 0
 
     def __init__(self, name_):
@@ -165,7 +177,7 @@ class HtmlClient(threading.Thread):
 
             if not gl.g_url_queue.empty():
                 try:
-                    ele = gl.g_url_queue.get(timeout=self.__GET_TIMEOUT)
+                    ele = gl.g_url_queue.get(timeout=self.GET_TIMEOUT)
                     self.work_func(ele.method, ele.url, ele.payloads, ele.request_headers)
                 except Queue.Empty, e :
                     self.httpclient.logger.warning('timeout when get url from url queue')
@@ -181,11 +193,19 @@ class HtmlClient(threading.Thread):
         assert intval >=0, "inteval must be positive value"
         cls.intval = intval
 
+    @classmethod
+    def set_get_timeout(cls, timeout):
+        """
+        set timeout value when get element from empty queue
+        """
+        assert timeout>=0, "parameter `timeout` must be positive value!"
+        cls.GET_TIMEOUT = timeout
+
 
 class StaticClient(threading.Thread):
     """charged to handle static resource and store them in file system"""
 
-    __GET_TIMEOUT = 10
+    GET_TIMEOUT = 10
     intval = 0
 
     def __init__(self, name_):
@@ -213,7 +233,7 @@ class StaticClient(threading.Thread):
             
             if not gl.g_static_rc.empty():
                 try:
-                    ele = gl.g_static_rc.get(timeout=self.__GET_TIMEOUT)     # HttpSrsc instance
+                    ele = gl.g_static_rc.get(timeout=self.GET_TIMEOUT)     # HttpSrsc instance
                     self.work_func(ele.urls, ele.headers, ele.storepath)
                 except Queue.Empty, e :
                     self.httpclient.logger.warning('timeout when get url from url queue')
@@ -228,3 +248,11 @@ class StaticClient(threading.Thread):
         """
         assert intval >=0, "inteval must be positive value"
         cls.intval = intval
+
+    @classmethod
+    def set_get_timeout(cls, timeout):
+        """
+        set timeout value when get element from empty queue
+        """
+        assert timeout>=0, "parameter `timeout` must be positive value!"
+        cls.GET_TIMEOUT = timeout

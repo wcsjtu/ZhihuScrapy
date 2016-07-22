@@ -12,6 +12,7 @@ sys.path.append("..")
 
 #import Global as gl
 from SpiderFrame import Global as gl
+from SpiderFrame import ErrorCode
 from ..Logger import ZhihuLog
 import Config
 from ..Html.StructData import StructData
@@ -55,9 +56,9 @@ def _create_database(table_list):
             cur.execute(table)
             _g_database_logger.info("Succeed to create table %s in database %s"%(table, gl.g_mysql_params['db']))
         except OperationalError, e :
-            _g_database_logger.error('Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], e.message))            
-            if e[0] != 1050:
-                print 'Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], e.message)
+            _g_database_logger.error('Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], str(e)))            
+            if e[0] != ErrorCode.TABLE_EXISTED:
+                print 'Fail to create table in database %s, reason: %s'%(gl.g_mysql_params['db'], str(e))
                 sys.exit()
 
     return conn
@@ -68,7 +69,7 @@ class DataBase(threading.Thread):
     """
 
     _COMMIT_INTEVAL = 300
-    _TIME_OUT = 5
+    GET_TIMEOUT = 5
 
     def __init__(self):
         threading.Thread.__init__(self, name='database')        
@@ -119,7 +120,7 @@ class DataBase(threading.Thread):
                     self.timer = time.time()
                 else:
                     try:
-                        instance = gl.g_data_queue.get(timeout=self._TIME_OUT)
+                        instance = gl.g_data_queue.get(timeout=self.GET_TIMEOUT)
                         self.insert_data(instance)
                     except Queue.Empty:
                         pass
@@ -128,7 +129,7 @@ class DataBase(threading.Thread):
                 if self.exit:
                     _g_database_logger.warning("Task Compeleted, database thread exit")
                     break
-            except Exception, e :
+            except Error, e :
                 _g_database_logger.error("commit data to database error, reason: %s"%str(e))
         self.cur.close()
 
@@ -136,7 +137,7 @@ class DataBase(threading.Thread):
         """commit insert transaction"""
         try:
             self.database.commit()
-        except Exception, e :
+        except Error, e :
             _g_database_logger.error("commit data to database error, reason: %s"%str(e))
 
 
@@ -190,3 +191,11 @@ class DataBase(threading.Thread):
 
     def run(self):
         self.write()
+
+    @classmethod
+    def set_get_timeout(cls, timeout):
+        """
+        set timeout value when get element from empty queue
+        """
+        assert timeout>=0, "parameter `timeout` must be positive value!"
+        cls.GET_TIMEOUT = timeout

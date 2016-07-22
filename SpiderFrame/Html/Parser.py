@@ -4,6 +4,7 @@ import re
 import os
 import HTMLParser
 import multiprocessing
+import Queue
 from multiprocessing import Manager
 import sys
 reload(sys)
@@ -41,8 +42,7 @@ class ParserProc(multiprocessing.Process):
     # the format of mapping is {"method_name": _sre.SRE_Pattern instance}, such as {"parse_bing": re.compile(r'cn.bing.com')}.
     # if sextp.url has no parse method in mapping, the default parse method 'parse_default' will be called.
     method_url_map = {}
-    _static_rc = ['jpeg', 'gif', 'css', 'js', 'png', 'ico']
-
+    TIME_OUT = 5
 
     def __init__(self, name_ ):
         super(ParserProc, self).__init__(name = name_)
@@ -66,16 +66,16 @@ class ParserProc(multiprocessing.Process):
         """
         html_queue = proc_queue['html_queue']
         url_queue = proc_queue['url_queue']
-        try:
-            while True:
-                if self.exit:
-                    print 'task completed! process %s exit'%self.name
-                    os._exit(0) 
-                sextp = html_queue.get()
-                #print "url in Parser: ",sextp.url
-                self.dispatch(sextp, proc_queue) 
-        except Exception, e :
-            _g_html_logger.error(e)         
+        while True:
+            if self.exit:
+                print 'task completed! process %s exit'%self.name
+                os._exit(0) 
+            try:
+                sextp = html_queue.get(timeout = self.TIME_OUT)
+                self.dispatch(sextp, proc_queue)
+            except Queue.Empty:
+                pass
+            #print "url in Parser: ",sextp.url                 
         os._exit(0) 
 
     def parse_default(self, sextp, proc_queue):
@@ -124,3 +124,18 @@ class ParserProc(multiprocessing.Process):
         """add map relation of func and pattern to cls.method_url_map"""
         assert isinstance(pattern, re.compile(r"").__class__)
         cls.method_url_map[func] = pattern
+
+    def extract_url(self, html):
+        """
+        extract urls from html and return a list of urls
+        """
+        self._basic_parser.feed(html)
+        return self._basic_parser._urls
+
+    @classmethod
+    def set_timeout(cls, timeout):
+        """
+        set timeout value when get element from empty queue
+        """
+        assert timeout>=0, "parameter `timeout` must be positive value!"
+        cls.TIME_OUT = timeout

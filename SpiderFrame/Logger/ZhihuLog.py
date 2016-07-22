@@ -30,4 +30,3 @@ def creatlogger(logger_name, logfile=None, log_level=logging.WARNING):
   
     return logger       
 
-gl.g_fail_url = creatlogger('%s_FailURL'%datetime.datetime.now().strftime('%Y-%m-%d'))     
