@@ -27,6 +27,8 @@ var/
 *.db
 *.ini
 *.log
+*.sln
+*.pyproj
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
