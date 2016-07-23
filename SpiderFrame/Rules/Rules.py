@@ -81,13 +81,12 @@ class Rules(object):
             if next is not None:
                 if not cls.in_bloom(next.url, next.payloads):
                     temp.append(next)
-
             #handle urls in htmls
             url_list = cls.filt_rules(sextp, ret)
             if url_list is not None:
                 for url in url_list:
                     if not cls.in_bloom(url, None):
-                        temp.append(HttpSextp(url, "GET", None, None,None,None))           
+                        temp.append(HttpSextp(url, "GET", None, None,None,None))      
             ret = None if temp == [] else temp         
             return ret
         return wrapper

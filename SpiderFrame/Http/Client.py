@@ -123,6 +123,7 @@ class HttpClient(object):
                 if ret is not None:
                     with open(rc_path, 'wb') as f:
                         f.write(ret.response[0])
+                    print "OK %s"%rc_name
             except (IndexError, IOError), e :
                 gl.g_http_client.logger.error( "%s when downloading img %s" % (e, url_))
                 print "%s when downloading img %s" % (e, url_)

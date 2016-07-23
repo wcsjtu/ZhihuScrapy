@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ATTENTION: this module doesn't support multi-threading or multiprocessing.
+# MAKE SURE there's only one Parser process!!!! 
 
 import re
 import os
@@ -72,8 +74,10 @@ class ParserProc(multiprocessing.Process):
                 os._exit(0) 
             try:
                 sextp = html_queue.get(timeout = self.TIME_OUT)
+                print "get url in Parser: ", sextp.url
                 self.dispatch(sextp, proc_queue)
             except Queue.Empty:
+                print "timeout, queue size in proc Parser: ", html_queue.qsize()
                 pass
             #print "url in Parser: ",sextp.url                 
         os._exit(0) 
@@ -91,6 +95,7 @@ class ParserProc(multiprocessing.Process):
                                                                                                            'static_rc': gl.g_static_rc}         
         @return: if method decroated by Rules.filter, it must return instance of RuleFactor. if there no decroator, method must return list of Sextp           
         """
+        self._basic_parser._urls = []
         ret = []
         self._basic_parser.feed(sextp.response[0])
         if self._basic_parser._urls == []:
@@ -129,6 +134,8 @@ class ParserProc(multiprocessing.Process):
         """
         extract urls from html and return a list of urls
         """
+        # the variable below leads to this module couldn't work in multi-thread condition
+        self._basic_parser._urls = []
         self._basic_parser.feed(html)
         return self._basic_parser._urls
 
