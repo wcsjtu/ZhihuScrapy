@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 import re
 import os
@@ -30,10 +30,10 @@ class MyHttpClient(Client.HttpClient):
     def __init__(self, host):
         super(MyHttpClient, self).__init__()
         self.url = host
-        self.account = {'phone_num': '1**', 'password': '**', 'remember_me':"true", '_xsrf': '**'}
-        if not self.login_success:            
-            self.input_account()
-            self.login()
+        self.account = {'phone_num': '1**', 'password': '**', 'remember_me':"true", "_xsrf": "**"}
+        #if not self.login_success:            
+        #    #self.input_account()
+        #    self.login()
 
     def _get_veri_code(self):
         """to get captcha"""
@@ -53,33 +53,34 @@ class MyHttpClient(Client.HttpClient):
         if self.login_success: return True
         self.account['remember_me'] = "true" 
         uri = "/login/email" if 'email' in self.account else "/login/phone_num"
-        login_url = self.url+uri
-        #rqst = self.session.request('GET', self.url, headers=self.default_headers)    
-        rqst = self.url_request('GET', self.url, None, None)
-         
+        login_url = self._url+uri
+        rqst = self.session.request('GET', self._url, headers=self.default_headers)     
         login_counter = 0
         while login_counter <= self._MAX_LOGIN_LIMIT:       
             login_counter += 1  
             try:
-                if 'Set-Cookie' in rqst.response_headers and '_xsrf' not in self.account:
-                    self.account['_xsrf'] = re.findall("_xsrf=(.*?);", rqst.response_headers['Set-Cookie'])[0]  
-                #rqst2 = self.session.request('POST', login_url, params=self.account, headers=self.default_headers)
-                rqst2 = self.url_request("POST", login_url, self.account, None)
-                ret_value = json.loads(rqst2.response[0])['r']
-                if ret_value == 0:
-                    self.logger.error('Succeed to login')
-                    self.login_success = True
-                    self._is_init = True    
-                    login_counter = self._MAX_LOGIN_LIMIT
-                    return True
+                if 'Set-Cookie' in rqst.headers and '_xsrf' not in self.account:
+                    self.account['_xsrf'] = re.findall("_xsrf=(.*?);", rqst.headers['Set-Cookie'])[0]  
+                rqst2 = self.session.request('POST', login_url, params=self.account, headers=self.default_headers)
+                if rqst2.status_code == ErrorCode.HTTP_OK:
+                    ret_value = json.loads(rqst2.content)['r']
+                    if ret_value == 0:
+                        self.logger.error('Succeed to login')
+                        self.login_success = True
+                        self._is_init = True    
+                        login_counter = self._MAX_LOGIN_LIMIT
+                        return True
+                    else:
+                        ret = self._get_veri_code()
+                        if not ret:continue
+                        Captcha.show_captcha()
+                        cap = raw_input('please input Captcha which showed in your screen\n')
+                        self.account['captcha'] = cap
+                        continue                        
                 else:
-                    ret = self._get_veri_code()
-                    if not ret:continue
-                    os.system("captcha.gif")
-                    cap = raw_input('please input Captcha which showed in your screen\n')
-                    self.account['captcha'] = cap
-                    continue                        
-            except (IndexError, KeyError), e:
+                    self.logger.info("Fail to login")
+                    continue
+            except IndexError, e:
                 self.logger.error('Fail to login, reason is %s'%e)
                 
         self.login_success = False
@@ -232,6 +233,8 @@ class ZhihuRules(Rules.Rules):
     MAX_COMMENT_PER_PAGE = 30
     QUESTION_PER_PAGE_BING = 10
 
+    _filter_pattern = re.compile(r'/question/\d{8}|/people/.+?(?=/)|/people/.+')
+
     def __init__(self, *args, **kwargs):
         return super(ZhihuRules, self).__init__(*args, **kwargs)
 
@@ -255,7 +258,7 @@ class ZhihuRules(Rules.Rules):
                     #ret = ['POST', sextp.url, sextp.payloads, sextp.request_headers]
                     pass
                 else:
-                    print "account in Rules: ", gl.g_http_client.account
+                    #print "account in Rules: ", gl.g_http_client.account
                     url_token = re.findall(r'\d{8}', sextp.url)[0]
                     _xsrf = gl.g_http_client.account['_xsrf']
                     url_ = ''.join([gl.g_http_client.url, '/node/QuestionAnswerListV2'])
@@ -280,6 +283,8 @@ class ZhihuRules(Rules.Rules):
                     return None
                 sextp.payloads['first'] += cls.QUESTION_PER_PAGE_BING
                 #ret = ["GET", sextp.url, sextp.payloads, None]
+            else:
+                return None
             sextp.response = None
             sextp.response_headers = None
             return sextp
@@ -290,7 +295,20 @@ class ZhihuRules(Rules.Rules):
 
     @classmethod
     def filt_rules(cls, sextp, rulefactor):
-        return None
+        """
+        filter the url in rulefactor.urls
+        """
+        if rulefactor.urls is None:
+            return None
+        ret_urls = []
+        for url in rulefactor.urls:
+            
+            keyword = cls._filter_pattern.findall(url)
+            if keyword != []:
+                if "people" in keyword[0]:
+                    keyword[0] = keyword[0] + "/about/"
+                ret_urls.append(zhihu_host+keyword[0])
+        return None if ret_urls == [] else ret_urls
 
 
 class ZhihuPaser(Parser.ParserProc):
@@ -381,9 +399,10 @@ class ZhihuPaser(Parser.ParserProc):
                 answer_nodes = []
         answer_counts = len(answer_nodes)
         
+        urls = self.extract_url(sextp.response[0])
         if answer_counts == 0 and u'"msg": []' not in html[0]:
             log.error("no answer in question page, chech xpath of answer_nodes")
-            return ErrorCode.LIST_EMPTY_ERROR
+            return Rules.RuleFactor(0, urls)
                     
         for node in answer_nodes:
             try:
@@ -462,8 +481,10 @@ class ZhihuPaser(Parser.ParserProc):
                 print '%s when parser %s'%(e, quest_url)
                 log.warning('%s when parser %s'%(e, quest_url))
 
-        return Rules.RuleFactor(answer_counts, None)
-            
+        
+        return Rules.RuleFactor(answer_counts, urls)
+    
+    @ZhihuRules.filter        
     def parse_usr(self, sextp, proc_queue):
         """
         parse question url and title from html returned by Bing
@@ -552,7 +573,8 @@ class ZhihuPaser(Parser.ParserProc):
             proc_queue['data_queue'].put(user)
         except Exception, e:
             log.error("%s when parser %s"%(e, url))
-        return None
+        urls = self.extract_url(sextp.response[0])
+        return Rules.RuleFactor(-1, urls)
         
     @ZhihuRules.filter
     def parse_cmnt(self, sextp, proc_queue):
@@ -604,32 +626,7 @@ ZhihuPaser.add_map(ZhihuPaser.parse_bing, re.compile(r'cn.bing.com'))
 ZhihuPaser.add_map(ZhihuPaser.parse_cmnt, re.compile(r'/r/answers/\d+?/comments'))
 ZhihuPaser.add_map(ZhihuPaser.parse_qstn, re.compile(r'/question/\d{8}'))
 ZhihuPaser.add_map(ZhihuPaser.parse_usr, re.compile(r'about'))
-
-#
-#
-
-def test_parser():
-    gl.g_http_client.account = {'email': 'aaaa@xxx.com', 'password': '123123', '_xsrf': 'asdfasdfasdfsafdgasdfsfdgasdfsfdg'}
-    DataBase.DataBase.set_intval(30)
-    import os
-    path = os.getcwd()
-    with open(path + '/test/bing.html', 'r') as f:
-        bing_html = [f.read()]
-        sextp_bing = SexTuple.HttpSextp("https://cn.bing.com/search", "GET", None, {"q": "site:zhihu.com/question", "first":1}, bing_html, None)
-        gl.g_html_queue.put(sextp_bing)
-
-    with open(path + "/test/question.html", 'r') as f:
-        question_html = [f.read()]
-        sextp_qst = SexTuple.HttpSextp("https://www.zhihu.com/question/33500236", "GET", None, None, question_html, None)
-        gl.g_html_queue.put(sextp_qst)
-
-    with open(path + "/test/user.html", 'r') as f:
-        user_html = [f.read()]
-        sextp_usr = SexTuple.HttpSextp("https://www.zhihu.com/people/cong-wei-79-45/about", "GET", "https://www.zhihu.com/people/cong-wei-79-45/", None, user_html, None)       
-        gl.g_html_queue.put(sextp_usr)
-
-    parser = ZhihuPaser(fk=False)
-    parser.work(parser._args[0])
+ZhihuPaser.parse_default = ZhihuRules.filter(ZhihuPaser.parse_default)
 
 
 gl.g_http_client = MyHttpClient(zhihu_host)
@@ -640,7 +637,7 @@ def main():
     bing_start = SexTuple.HttpSextp('https://cn.bing.com/search', "GET", None, {'q':u'site:zhihu.com/question', 'first':1}, None, None)
     qst_start = SexTuple.HttpSextp('https://www.zhihu.com/question/39677202', "GET", None, None, None, None)
     cmt_start = SexTuple.HttpSextp('https://www.zhihu.com/r/answers/31504680/comments', "GET", None, None, None, None)
-    usr_start = SexTuple.HttpSextp('https://www.zhihu.com/people/wang-su-yang-43/about', "GET", None, None, None, None)
+    usr_start = SexTuple.HttpSextp('https://www.zhihu.com/people/wang-su-yang-43/about/', "GET", None, None, None, None)
 
     gl.g_url_queue.put(bing_start)
     gl.g_url_queue.put(qst_start)
@@ -656,6 +653,7 @@ def main():
         print 'html queue: ', gl.g_html_queue.qsize(), "parser: ", parser.is_alive()
         print 'data queue: ', gl.g_data_queue.qsize(), "database: ", gl.g_database.isAlive()
         print 'image queue:', gl.g_static_rc.qsize() , "image: ", static_rcclient.isAlive()
+        print "failure queue: ", gl.g_fail_url.qsize()
         print '=========================================\n\n'
         time.sleep(3)    
 
@@ -665,6 +663,4 @@ if __name__ == "__main__":
 
 
     main()
-
-
     print zhihu_host

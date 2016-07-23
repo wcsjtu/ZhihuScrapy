@@ -75,6 +75,21 @@ class GithubRules(Rules.Rules):
             return None
         else:
             return ret_urls
+    #_filter_pattern = re.compile(r'/question/\d{8}|/people/.+')
+    #@classmethod
+    #def filt_rules(cls, sextp, rulefactor):
+    #    """
+    #    filter the url in rulefactor.urls
+    #    """
+    #    if rulefactor.urls is None:
+    #        return None
+    #    ret_urls = []
+    #    for url in rulefactor.urls:
+            
+    #        keyword = cls._filter_pattern.findall(url)
+    #        if keyword != []:
+    #            ret_urls.append("https://www.zhihu.com"+keyword[0])
+    #    return None if ret_urls == [] else ret_urls
 
 
 class GithubParser(Parser.ParserProc):
@@ -171,7 +186,7 @@ def test_parser():
     import os
     pwd = os.getcwd()
 
-    with open(pwd + "/test/github.html", 'r') as f:
+    with open(pwd + "/test/zhihu.html", 'r') as f:
         html = [f.read()]
         sextp_github = SexTuple.HttpSextp("https://github.com/search", "GET", None, {'type': 'Repositories', 'q': 'python'}, html, None)
         gl.g_html_queue.put(sextp_github)
@@ -193,5 +208,5 @@ def test_parser():
 
 
 if __name__ == "__main__":
-    main()
-    #test_parser()
+    #main()
+    test_parser()
