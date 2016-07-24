@@ -119,6 +119,9 @@ class HttpClient(object):
             try:
                 rc_name = url_.split('/')[-1]
                 rc_path = os.path.join(storepath, rc_name)
+                if os.path.exists(rc_path):
+                    print "EXISTD %s"%rc_name
+                    continue
                 ret = self.url_request('GET', url_, None, None)
                 if ret is not None:
                     with open(rc_path, 'wb') as f:
@@ -227,7 +230,8 @@ class StaticClient(threading.Thread):
     def run(self):
         """loop"""
         while True:
-            if (gl.g_url_queue.empty() and gl.g_html_queue.empty() and gl.g_static_rc.empty()) or self.exit:
+            #if (gl.g_url_queue.empty() and gl.g_html_queue.empty() and gl.g_static_rc.empty()) or self.exit:
+            if self.exit:
                 self.httpclient.logger.warning('task completed! thread %s exit'%self.name)
                 print 'task completed! thread %s exit'%self.name
                 break
